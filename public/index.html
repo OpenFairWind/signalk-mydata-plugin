@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Navigation Manager</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand__title">Navigation Manager</span>
+      <span class="brand__subtitle">Waypoints • Routes • Tracks</span>
+    </div>
+
+    <div class="topbar__right">
+      <div class="status" id="status">Connecting…</div>
+      <button class="btn btn--ghost" id="btnRefresh" title="Refresh">
+        <span class="icon" data-icon="refresh"></span>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel">
+      <div class="panel__section">
+        <div class="panel__title">Browse</div>
+        <div class="segmented">
+          <button class="segmented__btn segmented__btn--active" data-tab="waypoints">Waypoints</button>
+          <button class="segmented__btn" data-tab="routes">Routes</button>
+          <button class="segmented__btn" data-tab="tracks">Tracks</button>
+        </div>
+      </div>
+
+      <div class="panel__section">
+        <div class="panel__title">Filter</div>
+        <label class="field">
+          <span>Search</span>
+          <input id="filterText" type="text" placeholder="Name / description…" />
+        </label>
+
+        <div class="grid2">
+          <label class="field">
+            <span>Within (NM)</span>
+            <input id="filterWithinNm" type="number" min="0" step="0.1" placeholder="e.g., 5" />
+          </label>
+          <label class="field">
+            <span>Icon</span>
+            <select id="filterIcon">
+              <option value="">Any</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="grid2">
+          <label class="field">
+            <span>Sort</span>
+            <select id="sortBy">
+              <option value="name">Name</option>
+              <option value="distance">Distance</option>
+              <option value="bearing">Bearing</option>
+              <option value="updated">Updated</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Order</span>
+            <select id="sortOrder">
+              <option value="asc">Ascending</option>
+              <option value="desc">Descending</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button class="btn" id="btnImport"><span class="icon" data-icon="upload"></span> Import…</button>
+          <button class="btn" id="btnExport"><span class="icon" data-icon="download"></span> Export…</button>
+        </div>
+
+        <div class="muted small">
+          Distance & bearing are computed from <code>vessels.self.navigation.position</code>.
+        </div>
+      </div>
+
+      <div class="panel__section">
+        <div class="panel__title">Bulk actions</div>
+        <div class="actions">
+          <button class="btn btn--danger" id="btnBulkDelete"><span class="icon" data-icon="trash"></span> Delete selected</button>
+        </div>
+        <label class="checkbox">
+          <input type="checkbox" id="selectAll" />
+          <span>Select all in list</span>
+        </label>
+      </div>
+
+      <div class="panel__section">
+        <div class="panel__title">Create waypoint</div>
+        <div class="muted small">Quick create a waypoint at current position.</div>
+        <div class="actions">
+          <button class="btn" id="btnCreateHere"><span class="icon" data-icon="pin"></span> Create at vessel position</button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="content">
+      <div class="content__header">
+        <div class="content__title" id="listTitle">Waypoints</div>
+        <div class="content__meta" id="listMeta">—</div>
+      </div>
+
+      <div class="tablewrap">
+        <table class="table" id="table">
+          <thead>
+            <tr>
+              <th style="width:40px"><input type="checkbox" id="selectAllHeader" /></th>
+              <th>Icon</th>
+              <th>Name</th>
+              <th class="num">Dist (NM)</th>
+              <th class="num">Brg (°)</th>
+              <th class="muted">ID</th>
+              <th style="width:320px">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <footer class="footer">
+        <div class="muted small">
+          Uses OpenBridge icons. Signal K resources API for CRUD. Import/export: CSV, GPX, KML.
+        </div>
+      </footer>
+    </section>
+  </main>
+
+  <dialog id="dlgExport">
+    <form method="dialog" class="dialog">
+      <div class="dialog__title">Export</div>
+      <div class="dialog__body">
+        <label class="field">
+          <span>Format</span>
+          <select id="exportFormat">
+            <option value="csv">CSV</option>
+            <option value="gpx">GPX</option>
+            <option value="kml">KML</option>
+                      <option value="geojson">GeoJSON</option>
+          </select>
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" id="exportSelectedOnly" />
+          <span>Export selected only</span>
+        </label>
+      </div>
+      <div class="dialog__actions">
+        <button class="btn btn--ghost">Cancel</button>
+        <button class="btn" id="doExport" value="ok"><span class="icon" data-icon="download"></span> Export</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgImport">
+    <form method="dialog" class="dialog">
+      <div class="dialog__title">Import</div>
+      <div class="dialog__body">
+        <label class="field">
+          <span>Format</span>
+          <select id="importFormat">
+            <option value="csv">CSV</option>
+            <option value="gpx">GPX</option>
+            <option value="kml">KML</option>
+                      <option value="geojson">GeoJSON</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>File</span>
+          <input id="importFile" type="file" accept=".csv,.gpx,.kml,.geojson,.json,.xml" />
+        </label>
+        <div class="muted small">
+          Imported items are created via <code>POST /signalk/v1/api/resources</code>.
+        </div>
+      </div>
+      <div class="dialog__actions">
+        <button class="btn btn--ghost">Cancel</button>
+        <button class="btn" id="doImport" value="ok"><span class="icon" data-icon="upload"></span> Import</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgEdit">
+    <form method="dialog" class="dialog dialog--wide">
+      <div class="dialog__title">Edit</div>
+      <div class="dialog__body">
+        <div class="grid2">
+          <label class="field">
+            <span>Name</span>
+            <input id="editName" type="text" />
+          </label>
+          <label class="field">
+            <span>Icon</span>
+            <select id="editIcon"></select>
+          </label>
+        </div>
+
+        <div class="grid2">
+          <label class="field">
+            <span>Latitude</span>
+            <input id="editLat" type="number" step="0.000001" />
+          </label>
+          <label class="field">
+            <span>Longitude</span>
+            <input id="editLon" type="number" step="0.000001" />
+          </label>
+        </div>
+
+        <label class="field">
+          <span>Description</span>
+          <textarea id="editDesc" rows="3"></textarea>
+        </label>
+      </div>
+      <div class="dialog__actions">
+        <button class="btn btn--ghost">Cancel</button>
+        <button class="btn" id="doSave" value="ok"><span class="icon" data-icon="save"></span> Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
