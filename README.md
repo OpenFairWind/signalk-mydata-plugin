@@ -27,7 +27,7 @@ From Signal K Node Server UI:
 
 ## Open
 
-Default mount path: `/webapps/nav-manager`
+Default mount path: `/webapps/mydata`
 
 ## Notes
 

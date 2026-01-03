@@ -26,7 +26,7 @@ module.exports = function (app) {
       mountPath: {
         type: 'string',
         title: 'Webapp mount path',
-        default: '/webapps/nav-manager'
+        default: '/webapps/mydata'
       }
     }
   }
