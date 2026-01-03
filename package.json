@@ -1,0 +1,20 @@
+{
+  "name": "signalk-mydata-plugin",
+  "version": "1.0.0",
+  "description": "A web application to manage waypoints, tracks, and routes.",
+  "main": "index.js",
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-webapp",
+    "waypoints",
+    "routes",
+    "tracks"
+  ],
+  "author": "Raffaele Montella",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "dependencies": {}
+}
