@@ -38,4 +38,4 @@ Default mount path: `/webapps/nav-manager`
 
 ## License
 
-MIT — see [LICENSE.md](./LICENSE.md)
+Apache 2.0 — see [LICENSE](./LICENSE)
