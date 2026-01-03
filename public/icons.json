@@ -1,0 +1,70 @@
+{
+  "baseUrl": "https://www.openbridge.no/wp-content/uploads/openbridge-icons/",
+  "icons": [
+    {
+      "id": "pin",
+      "label": "Pin",
+      "path": "markers/marker.svg"
+    },
+    {
+      "id": "waypoint",
+      "label": "Waypoint",
+      "path": "navigation/waypoint.svg"
+    },
+    {
+      "id": "harbor",
+      "label": "Harbor",
+      "path": "places/harbor.svg"
+    },
+    {
+      "id": "anchor",
+      "label": "Anchor",
+      "path": "navigation/anchor.svg"
+    },
+    {
+      "id": "danger",
+      "label": "Danger",
+      "path": "warnings/warning.svg"
+    },
+    {
+      "id": "edit",
+      "label": "Edit",
+      "path": "actions/edit.svg"
+    },
+    {
+      "id": "trash",
+      "label": "Delete",
+      "path": "actions/delete.svg"
+    },
+    {
+      "id": "goto",
+      "label": "Go to",
+      "path": "navigation/goto.svg"
+    },
+    {
+      "id": "map",
+      "label": "Show on map",
+      "path": "maps/map.svg"
+    },
+    {
+      "id": "refresh",
+      "label": "Refresh",
+      "path": "actions/refresh.svg"
+    },
+    {
+      "id": "download",
+      "label": "Download",
+      "path": "actions/download.svg"
+    },
+    {
+      "id": "upload",
+      "label": "Upload",
+      "path": "actions/upload.svg"
+    },
+    {
+      "id": "save",
+      "label": "Save",
+      "path": "actions/save.svg"
+    }
+  ]
+}

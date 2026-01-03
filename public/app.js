@@ -1,0 +1,448 @@
+import { haversineNm, bearingDeg, fmt, downloadText, parseCSV, toCSV, parseGPX, toGPX, parseKML, toKML, parseGeoJSON, toGeoJSON } from './formats.js'
+const $ = (sel) => document.querySelector(sel)
+
+const state = {
+  tab: 'waypoints',
+  resources: { waypoints: {}, routes: {}, tracks: {} },
+  list: [],
+  selected: new Set(),
+  vesselPos: null,
+  icons: null
+}
+const RES_ENDPOINT = (type) => `/signalk/v1/api/resources/${type}`
+
+function setStatus(text, ok = true) {
+  const el = $('#status')
+  el.textContent = text
+  el.style.color = ok ? 'var(--muted)' : 'var(--danger)'
+}
+
+async function loadIcons() {
+  const res = await fetch('./icons.json', { cache: 'no-cache' })
+  state.icons = await res.json()
+
+  for (const sel of [$('#filterIcon'), $('#editIcon')]) {
+    sel.innerHTML = ''
+    const optAny = document.createElement('option')
+    optAny.value = ''
+    optAny.textContent = sel.id === 'editIcon' ? '— choose —' : 'Any'
+    sel.appendChild(optAny)
+
+    for (const ic of state.icons.icons) {
+      const o = document.createElement('option')
+      o.value = ic.id
+      o.textContent = ic.label
+      sel.appendChild(o)
+    }
+  }
+
+  document.querySelectorAll('.icon[data-icon]').forEach((el) => {
+    const id = el.getAttribute('data-icon')
+    const ic = state.icons.icons.find(x => x.id === id)
+    if (!ic) return
+    const url = state.icons.baseUrl + ic.path
+    el.style.webkitMaskImage = `url(${url})`
+    el.style.maskImage = `url(${url})`
+  })
+}
+
+async function fetchResources(type) {
+  const res = await fetch(RES_ENDPOINT(type), { cache: 'no-cache' })
+  if (!res.ok) throw new Error(`Fetch ${type} failed: ${res.status}`)
+  state.resources[type] = await res.json() || {}
+}
+
+function normalizeResource(type, id, obj) {
+  const item = { type, id, raw: obj }
+  item.name = obj.name || obj.title || id
+  item.description = obj.description || obj.note || ''
+  item.icon = (obj.properties && obj.properties.icon) || obj.icon || ''
+  item.updated = obj.timestamp || obj.updated || obj.modified || obj.created || null
+
+  if (type === 'waypoints') {
+    item.position = obj.position || (obj.feature?.geometry?.type === 'Point'
+      ? { latitude: obj.feature.geometry.coordinates[1], longitude: obj.feature.geometry.coordinates[0] }
+      : null)
+  }
+  return item
+}
+
+function computeDerived(item) {
+  if (state.vesselPos && item.position) {
+    const { latitude: lat1, longitude: lon1 } = state.vesselPos
+    const { latitude: lat2, longitude: lon2 } = item.position
+    item.distanceNm = haversineNm(lat1, lon1, lat2, lon2)
+    item.bearing = bearingDeg(lat1, lon1, lat2, lon2)
+  } else {
+    item.distanceNm = null
+    item.bearing = null
+  }
+}
+
+function getItemsForTab() {
+  const tab = state.tab
+  const r = state.resources[tab] || {}
+  return Object.entries(r).map(([id, obj]) => normalizeResource(tab, id, obj))
+}
+
+function applyFilters(list) {
+  const q = ($('#filterText').value || '').trim().toLowerCase()
+  const within = parseFloat($('#filterWithinNm').value || '')
+  const icon = ($('#filterIcon').value || '').trim()
+
+  return list.filter(it => {
+    if (q) {
+      const hay = `${it.name} ${it.description} ${it.id}`.toLowerCase()
+      if (!hay.includes(q)) return false
+    }
+    if (icon && (it.icon || '') !== icon) return false
+    if (!Number.isNaN(within) && within > 0) {
+      if (it.distanceNm == null || it.distanceNm > within) return false
+    }
+    return true
+  })
+}
+
+function applySort(list) {
+  const key = $('#sortBy').value
+  const order = $('#sortOrder').value
+  const dir = order === 'asc' ? 1 : -1
+  const getv = (it) => {
+    if (key === 'name') return (it.name || '').toLowerCase()
+    if (key === 'distance') return it.distanceNm ?? Number.POSITIVE_INFINITY
+    if (key === 'bearing') return it.bearing ?? Number.POSITIVE_INFINITY
+    if (key === 'updated') return it.updated ? new Date(it.updated).getTime() : 0
+    return it.name
+  }
+  return [...list].sort((a, b) => (getv(a) < getv(b) ? -1 : getv(a) > getv(b) ? 1 : 0) * dir)
+}
+
+function renderIconCell(iconId) {
+  const wrap = document.createElement('span')
+  wrap.className = 'imgicon'
+  const ic = (state.icons?.icons || []).find(x => x.id === iconId)
+  if (!ic) { wrap.textContent = '—'; wrap.classList.add('muted'); return wrap }
+  const img = document.createElement('img')
+  img.src = state.icons.baseUrl + ic.path
+  img.alt = ic.label
+  img.style.filter = 'invert(1)'
+  wrap.appendChild(img)
+  return wrap
+}
+
+function btnTiny(iconId, label, onClick) {
+  const b = document.createElement('button')
+  b.className = 'btn btn--tiny'
+  b.type = 'button'
+  b.innerHTML = `<span class="icon" data-icon="${iconId}"></span>${label}`
+  b.addEventListener('click', onClick)
+  const ic = state.icons.icons.find(x => x.id === iconId)
+  if (ic) {
+    const url = state.icons.baseUrl + ic.path
+    const el = b.querySelector('.icon')
+    el.style.webkitMaskImage = `url(${url})`
+    el.style.maskImage = `url(${url})`
+  }
+  return b
+}
+
+function renderActions(it) {
+  const wrap = document.createElement('div')
+  wrap.className = 'row-actions'
+  if (it.type === 'waypoints') {
+    wrap.appendChild(btnTiny('goto', 'Go to', () => gotoWaypoint(it)))
+    wrap.appendChild(btnTiny('map', 'Show on map', () => showOnMap(it)))
+    wrap.appendChild(btnTiny('edit', 'Edit', () => editWaypoint(it)))
+    wrap.appendChild(btnTiny('trash', 'Delete', () => deleteResource(it)))
+  } else {
+    wrap.appendChild(btnTiny('trash', 'Delete', () => deleteResource(it)))
+  }
+  return wrap
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+}
+
+function render() {
+  $('#listTitle').textContent = state.tab[0].toUpperCase() + state.tab.slice(1)
+  let list = getItemsForTab().map(it => {
+    if (state.tab === 'waypoints') computeDerived(it)
+    return it
+  })
+  list = applyFilters(list)
+  list = applySort(list)
+  state.list = list
+
+  $('#listMeta').textContent = `${list.length} item(s) • selected: ${state.selected.size}`
+
+  const tbody = $('#tbody')
+  tbody.innerHTML = ''
+  for (const it of list) {
+    const tr = document.createElement('tr')
+
+    const tdSel = document.createElement('td')
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.checked = state.selected.has(`${it.type}:${it.id}`)
+    cb.addEventListener('change', () => {
+      const k = `${it.type}:${it.id}`
+      if (cb.checked) state.selected.add(k)
+      else state.selected.delete(k)
+      render()
+    })
+    tdSel.appendChild(cb)
+    tr.appendChild(tdSel)
+
+    const tdIcon = document.createElement('td')
+    tdIcon.appendChild(renderIconCell(it.icon))
+    tr.appendChild(tdIcon)
+
+    const tdName = document.createElement('td')
+    tdName.innerHTML = `<div><strong>${escapeHtml(it.name)}</strong></div><div class="muted small">${escapeHtml(it.description || '')}</div>`
+    tr.appendChild(tdName)
+
+    const tdDist = document.createElement('td')
+    tdDist.className = 'num'
+    tdDist.textContent = it.distanceNm == null ? '—' : fmt(it.distanceNm, 2)
+    tr.appendChild(tdDist)
+
+    const tdBrg = document.createElement('td')
+    tdBrg.className = 'num'
+    tdBrg.textContent = it.bearing == null ? '—' : fmt(it.bearing, 0)
+    tr.appendChild(tdBrg)
+
+    const tdId = document.createElement('td')
+    tdId.className = 'muted'
+    tdId.textContent = it.id
+    tr.appendChild(tdId)
+
+    const tdAct = document.createElement('td')
+    tdAct.appendChild(renderActions(it))
+    tr.appendChild(tdAct)
+
+    tbody.appendChild(tr)
+  }
+}
+
+async function refresh() {
+  try {
+    setStatus('Refreshing…')
+    await Promise.all([fetchResources('waypoints'), fetchResources('routes'), fetchResources('tracks')])
+    render()
+    setStatus('Ready', true)
+  } catch (e) {
+    setStatus(e.message || String(e), false)
+  }
+}
+
+async function gotoWaypoint(it) {
+  try {
+    setStatus('Setting goto…')
+    const res = await fetch('./api/goto', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ waypoint: { id: it.id, name: it.name, position: it.position } })
+    })
+    if (!res.ok) throw new Error(`Goto failed: ${res.status}`)
+    setStatus('Goto set ✔', true)
+  } catch (e) { setStatus(e.message || String(e), false) }
+}
+
+async function showOnMap(it) {
+  // Best-effort: publishes plugins.nav-manager.selectedFeature together with goto
+  await gotoWaypoint(it)
+}
+
+async function editWaypoint(it) {
+  const dlg = $('#dlgEdit')
+  dlg.dataset.id = it.id
+  $('#editName').value = it.name || ''
+  $('#editDesc').value = it.description || ''
+  $('#editLat').value = it.position?.latitude ?? ''
+  $('#editLon').value = it.position?.longitude ?? ''
+  $('#editIcon').value = it.icon || ''
+  dlg.showModal()
+}
+
+async function saveWaypoint() {
+  const id = $('#dlgEdit').dataset.id
+  const name = $('#editName').value.trim()
+  const description = $('#editDesc').value.trim()
+  const lat = parseFloat($('#editLat').value)
+  const lon = parseFloat($('#editLon').value)
+  const icon = $('#editIcon').value.trim()
+  if (!id || !name || Number.isNaN(lat) || Number.isNaN(lon)) { setStatus('Missing name/position', false); return }
+
+  const orig = state.resources.waypoints[id]
+  if (!orig) { setStatus('Waypoint not found in cache', false); return }
+
+  const updated = JSON.parse(JSON.stringify(orig))
+  updated.name = name
+  updated.description = description
+  updated.position = { latitude: lat, longitude: lon }
+  updated.properties = updated.properties || {}
+  if (icon) updated.properties.icon = icon
+  else delete updated.properties.icon
+
+  try {
+    setStatus('Saving…')
+    const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated)
+    })
+    if (!res.ok) throw new Error(`Save failed: ${res.status}`)
+    await refresh()
+    setStatus('Saved ✔', true)
+  } catch (e) { setStatus(e.message || String(e), false) }
+}
+
+async function deleteResource(it) {
+  try {
+    if (!confirm(`Delete ${it.type.slice(0,-1)} "${it.name}"?`)) return
+    setStatus('Deleting…')
+    const res = await fetch(`${RES_ENDPOINT(it.type)}/${encodeURIComponent(it.id)}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`Delete failed: ${res.status}`)
+    state.selected.delete(`${it.type}:${it.id}`)
+    await refresh()
+    setStatus('Deleted ✔', true)
+  } catch (e) { setStatus(e.message || String(e), false) }
+}
+
+async function bulkDelete() {
+  const keys = [...state.selected].filter(k => k.startsWith(state.tab + ':'))
+  if (!keys.length) return
+  if (!confirm(`Delete ${keys.length} selected ${state.tab}?`)) return
+  for (const k of keys) {
+    const id = k.split(':')[1]
+    const it = normalizeResource(state.tab, id, state.resources[state.tab][id])
+    await deleteResource(it)
+  }
+  state.selected.clear()
+  await refresh()
+}
+
+async function createAtVesselPosition() {
+  if (!state.vesselPos) { setStatus('No vessel position available', false); return }
+  const name = `WP ${new Date().toISOString().slice(11,19)}`
+  const wp = { name, description: 'Created from Navigation Manager', position: { ...state.vesselPos }, properties: { icon: 'waypoint' } }
+  try {
+    setStatus('Creating…')
+    const res = await fetch(RES_ENDPOINT('waypoints'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(wp) })
+    if (!res.ok) throw new Error(`Create failed: ${res.status}`)
+    await refresh()
+    setStatus('Created ✔', true)
+  } catch (e) { setStatus(e.message || String(e), false) }
+}
+
+async function doExport() {
+  const fmtSel = $('#exportFormat').value
+  const selectedOnly = $('#exportSelectedOnly').checked
+  const items = selectedOnly ? state.list.filter(it => state.selected.has(`${it.type}:${it.id}`)) : state.list
+  if (state.tab !== 'waypoints') { setStatus('Export currently supports waypoints only', false); return }
+
+  const waypoints = items.map(it => ({
+    id: it.id, name: it.name, description: it.description,
+    latitude: it.position?.latitude, longitude: it.position?.longitude, icon: it.icon || ''
+  })).filter(w => w.latitude != null && w.longitude != null)
+
+  if (fmtSel === 'csv') downloadText('waypoints.csv', toCSV(waypoints))
+  if (fmtSel === 'gpx') downloadText('waypoints.gpx', toGPX({ waypoints }))
+  if (fmtSel === 'kml') downloadText('waypoints.kml', toKML({ waypoints }))
+  setStatus('Exported ✔', true)
+}
+
+async function doImport() {
+  const fmtSel = $('#importFormat').value
+  const f = $('#importFile').files?.[0]
+  if (!f) { setStatus('Select a file', false); return }
+  const text = await f.text()
+
+  try {
+    let items = []
+    if (fmtSel === 'csv') items = parseCSV(text)
+    if (fmtSel === 'gpx') items = parseGPX(text)
+    if (fmtSel === 'kml') items = parseKML(text)
+
+    const creates = items.filter(x => x.kind === 'waypoint').map(it => ({
+      name: it.name || 'Waypoint',
+      description: it.description || '',
+      position: { latitude: it.latitude, longitude: it.longitude },
+      properties: { icon: it.icon || 'waypoint' }
+    }))
+    if (!creates.length) throw new Error('No importable waypoints found')
+
+    setStatus(`Importing ${creates.length} waypoint(s)…`)
+    for (const c of creates) {
+      const res = await fetch(RES_ENDPOINT('waypoints'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })
+      if (!res.ok) throw new Error(`Create failed: ${res.status}`)
+    }
+    await refresh()
+    setStatus('Imported ✔', true)
+  } catch (e) { setStatus(e.message || String(e), false) }
+  finally { $('#importFile').value = '' }
+}
+
+function setTab(tab) {
+  state.tab = tab
+  state.selected.clear()
+  document.querySelectorAll('.segmented__btn').forEach(b => b.classList.toggle('segmented__btn--active', b.dataset.tab === tab))
+  render()
+}
+
+function setSelectAll(on) {
+  const list = getItemsForTab()
+  if (on) for (const it of list) state.selected.add(`${it.type}:${it.id}`)
+  else state.selected.clear()
+  render()
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  const url = `${proto}://${location.host}/signalk/v1/stream?subscribe=none`
+  const ws = new WebSocket(url)
+  ws.onopen = () => {
+    setStatus('Live connected', true)
+    ws.send(JSON.stringify({ context:'vessels.self', subscribe:[{ path:'navigation.position', period:1000 }] }))
+  }
+  ws.onmessage = (ev) => {
+    try {
+      const data = JSON.parse(ev.data)
+      for (const up of (data.updates || [])) {
+        for (const v of (up.values || [])) {
+          if (v.path === 'navigation.position' && v.value?.latitude != null) state.vesselPos = v.value
+        }
+      }
+      if (state.tab === 'waypoints') render()
+    } catch {}
+  }
+  ws.onclose = () => { setStatus('Live disconnected (retrying)…', false); setTimeout(connectWS, 2000) }
+}
+
+function wire() {
+  document.querySelectorAll('.segmented__btn').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)))
+  $('#btnRefresh').addEventListener('click', refresh)
+  ;['filterText','filterWithinNm','filterIcon','sortBy','sortOrder'].forEach(id => {
+    $(`#${id}`).addEventListener('input', render)
+    $(`#${id}`).addEventListener('change', render)
+  })
+  $('#selectAll').addEventListener('change', (e) => setSelectAll(e.target.checked))
+  $('#selectAllHeader').addEventListener('change', (e) => setSelectAll(e.target.checked))
+  $('#btnBulkDelete').addEventListener('click', bulkDelete)
+  $('#btnCreateHere').addEventListener('click', createAtVesselPosition)
+
+  $('#btnExport').addEventListener('click', () => $('#dlgExport').showModal())
+  $('#btnImport').addEventListener('click', () => $('#dlgImport').showModal())
+  $('#doExport').addEventListener('click', (e) => { e.preventDefault(); doExport(); $('#dlgExport').close() })
+  $('#doImport').addEventListener('click', (e) => { e.preventDefault(); doImport(); $('#dlgImport').close() })
+  $('#doSave').addEventListener('click', (e) => { e.preventDefault(); saveWaypoint(); $('#dlgEdit').close() })
+}
+
+async function boot() {
+  await loadIcons()
+  wire()
+  await refresh()
+  connectWS()
+}
+boot().catch(e => setStatus(e.message || String(e), false))
