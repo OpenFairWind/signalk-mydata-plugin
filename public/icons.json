@@ -1,70 +1,70 @@
 {
-  "baseUrl": "https://www.openbridge.no/wp-content/uploads/openbridge-icons/",
+  "baseUrl": "images/",
   "icons": [
     {
       "id": "pin",
       "label": "Pin",
-      "path": "markers/marker.svg"
+      "path": "marker.svg"
     },
     {
       "id": "waypoint",
       "label": "Waypoint",
-      "path": "navigation/waypoint.svg"
+      "path": "waypoint.svg"
     },
     {
       "id": "harbor",
       "label": "Harbor",
-      "path": "places/harbor.svg"
+      "path": "harbor.svg"
     },
     {
       "id": "anchor",
       "label": "Anchor",
-      "path": "navigation/anchor.svg"
+      "path": "anchor.svg"
     },
     {
       "id": "danger",
       "label": "Danger",
-      "path": "warnings/warning.svg"
+      "path": "warning.svg"
     },
     {
       "id": "edit",
       "label": "Edit",
-      "path": "actions/edit.svg"
+      "path": "edit.svg"
     },
     {
       "id": "trash",
       "label": "Delete",
-      "path": "actions/delete.svg"
+      "path": "delete.svg"
     },
     {
       "id": "goto",
       "label": "Go to",
-      "path": "navigation/goto.svg"
+      "path": "goto.svg"
     },
     {
       "id": "map",
       "label": "Show on map",
-      "path": "maps/map.svg"
+      "path": "map.svg"
     },
     {
       "id": "refresh",
       "label": "Refresh",
-      "path": "actions/refresh.svg"
+      "path": "refresh.svg"
     },
     {
       "id": "download",
       "label": "Download",
-      "path": "actions/download.svg"
+      "path": "download.svg"
     },
     {
       "id": "upload",
       "label": "Upload",
-      "path": "actions/upload.svg"
+      "path": "upload.svg"
     },
     {
       "id": "save",
       "label": "Save",
-      "path": "actions/save.svg"
+      "path": "save.svg"
     }
   ]
 }
