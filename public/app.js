@@ -9,7 +9,7 @@ const state = {
   vesselPos: null,
   icons: null
 }
-const RES_ENDPOINT = (type) => `/signalk/v1/api/resources/${type}`
+const RES_ENDPOINT = (type) => `/signalk/v2/api/resources/${type}`
 
 function setStatus(text, ok = true) {
   const el = $('#status')
@@ -134,7 +134,7 @@ function btnTiny(iconId, label, onClick) {
   const b = document.createElement('button')
   b.className = 'btn btn--tiny'
   b.type = 'button'
-  b.innerHTML = `<span class="icon" data-icon="${iconId}"></span>${label}`
+  b.innerHTML = `<span class="icon" data-icon="${iconId}"></span>`
   b.addEventListener('click', onClick)
   const ic = state.icons.icons.find(x => x.id === iconId)
   if (ic) {
@@ -212,11 +212,6 @@ function render() {
     tdBrg.textContent = it.bearing == null ? '—' : fmt(it.bearing, 0)
     tr.appendChild(tdBrg)
 
-    const tdId = document.createElement('td')
-    tdId.className = 'muted'
-    tdId.textContent = it.id
-    tr.appendChild(tdId)
-
     const tdAct = document.createElement('td')
     tdAct.appendChild(renderActions(it))
     tr.appendChild(tdAct)
@@ -239,7 +234,7 @@ async function refresh() {
 async function gotoWaypoint(it) {
   try {
     setStatus('Setting goto…')
-    const res = await fetch('./api/goto', {
+    const res = await fetch('/plugins/signalk-mydata-plugin/goto', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ waypoint: { id: it.id, name: it.name, position: it.position } })
@@ -250,8 +245,16 @@ async function gotoWaypoint(it) {
 }
 
 async function showOnMap(it) {
-  // Best-effort: publishes plugins.nav-manager.selectedFeature together with goto
-  await gotoWaypoint(it)
+  try {
+    setStatus('Setting show on map…')
+    const res = await fetch('/plugins/signalk-mydata-plugin/show', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ waypoint: { id: it.id, name: it.name, position: it.position } })
+    })
+    if (!res.ok) throw new Error(`Goto failed: ${res.status}`)
+    setStatus('Goto set ✔', true)
+  } catch (e) { setStatus(e.message || String(e), false) }
 }
 
 async function editWaypoint(it) {
