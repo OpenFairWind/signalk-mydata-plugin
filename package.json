@@ -2,7 +2,6 @@
   "name": "signalk-mydata-plugin",
   "version": "1.0.0",
   "description": "A web application to manage waypoints, tracks, and routes.",
-  "main": "index.js",
   "keywords": [
     "signalk-node-server-plugin",
     "signalk-webapp",
@@ -10,11 +9,20 @@
     "routes",
     "tracks"
   ],
-  "author": "Raffaele Montella",
-  "license": "MIT",
+  "signalk": {
+    "appIcon": "./assets/icons/icon-72x72.png",
+    "displayName": "MyData"
+  },
+  "signalk-plugin-enabled-by-default": false,
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/OpenFairWind/signalk-mydata-plugin"
   },
-  "dependencies": {}
+  "license": "Apache-2.0",
+  "author": "Raffaele Montella",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
 }
