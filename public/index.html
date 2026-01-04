@@ -7,7 +7,9 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
+<!--
   <header class="topbar">
+
     <div class="brand">
       <span class="brand__title">Navigation Manager</span>
       <span class="brand__subtitle">Waypoints • Routes • Tracks</span>
@@ -20,7 +22,7 @@
       </button>
     </div>
   </header>
-
+-->
   <main class="layout">
     <aside class="panel">
       <div class="panel__section">
@@ -76,9 +78,11 @@
           <button class="btn" id="btnExport"><span class="icon" data-icon="download"></span> Export…</button>
         </div>
 
+        <!--
         <div class="muted small">
           Distance & bearing are computed from <code>vessels.self.navigation.position</code>.
         </div>
+        -->
       </div>
 
       <div class="panel__section">
@@ -99,6 +103,13 @@
           <button class="btn" id="btnCreateHere"><span class="icon" data-icon="pin"></span> Create at vessel position</button>
         </div>
       </div>
+
+      <div class="panel__section">
+        <div class="status" id="status">Connecting…</div>
+        <button class="btn btn--ghost" id="btnRefresh" title="Refresh">
+          <span class="icon" data-icon="refresh"></span>
+        </button>
+      </div>
     </aside>
 
     <section class="content">
@@ -114,10 +125,9 @@
               <th style="width:40px"><input type="checkbox" id="selectAllHeader" /></th>
               <th>Icon</th>
               <th>Name</th>
-              <th class="num">Dist (NM)</th>
-              <th class="num">Brg (°)</th>
-              <th class="muted">ID</th>
-              <th style="width:320px">Actions</th>
+              <th class="num" style="text-align: right">Dist (NM)</th>
+              <th class="num" style="text-align: right">Brg (°)</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="tbody"></tbody>
@@ -126,7 +136,7 @@
 
       <footer class="footer">
         <div class="muted small">
-          Uses OpenBridge icons. Signal K resources API for CRUD. Import/export: CSV, GPX, KML.
+          <!--Uses OpenBridge icons. Signal K resources API for CRUD. Import/export: CSV, GPX , KML.-->
         </div>
       </footer>
     </section>
