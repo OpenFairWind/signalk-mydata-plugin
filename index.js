@@ -10,90 +10,110 @@
  *   so authentication/permissions are handled by the Signal K server.
  */
 const path = require('path')
-
 module.exports = function (app) {
-  const plugin = {}
-  const pluginId = 'signalk-mydata-plugin'
-  let router = null
+  const logError =
+      app.error ||
+      (err => {
+        console.error(err)
+      })
+  const debug =
+      app.debug ||
+      (msg => {
+        console.log(msg)
+      })
 
-  plugin.id = pluginId
+  var plugin = {
+    unsubscribes: []
+  }
+
+  plugin.id = "signalk-mydata-plugin"
   plugin.name = 'MyData (Waypoints/Routes/Tracks)'
   plugin.description = 'A web application to manage waypoints, tracks, and routes.'
 
-  plugin.schema = {
+  plugin.schema = () => ({
+    title: 'Mange my data',
     type: 'object',
     properties: {
-      mountPath: {
-        type: 'string',
-        title: 'Webapp mount path',
-        default: '/webapps/mydata'
+      interval: {
+        type: 'number',
+        title: 'Interval',
+        default: 0
       }
     }
+  })
+
+  let lastMessage = ''
+  plugin.statusMessage = function () {
+    return `${lastMessage}`
   }
 
   plugin.start = function (options) {
-    const mountPath = (options && options.mountPath) ? options.mountPath : '/webapps/nav-manager'
+    const mountPath = (options && options.mountPath) ? options.mountPath : '/webapps/mydata'
     const express = app.express
-    router = express.Router()
 
-    // --- webapp static
-    const publicDir = path.join(__dirname, 'public')
-    router.use('/', express.static(publicDir, { etag: true, maxAge: '1h' }))
+    plugin.registerWithRouter = (router) => {
 
-    // --- API: goto (publish nextPoint)
-    router.post('/api/goto', express.json({ limit: '512kb' }), (req, res) => {
-      try {
-        const wp = req.body && req.body.waypoint ? req.body.waypoint : null
-        if (!wp || !wp.position || wp.position.latitude == null || wp.position.longitude == null) {
-          return res.status(400).json({ ok: false, error: 'Missing waypoint.position.{latitude,longitude}' })
-        }
+      router.post('/plugins/${plugin.id}/goto', (req, res) => {
+        try {
+          const wp = req.body && req.body.waypoint ? req.body.waypoint : null
+          if (!wp || !wp.position || wp.position.latitude == null || wp.position.longitude == null) {
+            return res.status(400).json({ ok: false, error: 'Missing waypoint.position.{latitude,longitude}' })
+          }
 
-        const lat = Number(wp.position.latitude)
-        const lon = Number(wp.position.longitude)
-        const name = wp.name || wp.id || 'Waypoint'
+          const lat = Number(wp.position.latitude)
+          const lon = Number(wp.position.longitude)
+          const name = wp.name || wp.id || 'Waypoint'
 
-        const timestamp = new Date().toISOString()
-        const delta = {
-          context: 'vessels.self',
-          updates: [{
-            source: { label: pluginId },
-            timestamp,
-            values: [
-              {
-                path: 'navigation.courseRhumbline.nextPoint.position',
-                value: { latitude: lat, longitude: lon }
-              },
-              {
-                path: 'navigation.courseRhumbline.nextPoint.name',
-                value: name
-              },
-              // Best-effort GeoJSON feature for map highlighting
-              {
-                path: 'plugins.nav-manager.selectedFeature',
-                value: {
-                  type: 'Feature',
-                  geometry: { type: 'Point', coordinates: [lon, lat] },
-                  properties: { name, id: wp.id || null, type: 'waypoint' }
+          const timestamp = new Date().toISOString()
+          const delta = {
+            context: 'vessels.self',
+            updates: [{
+              source: { label: plugin.Id },
+              timestamp,
+              values: [
+                {
+                  path: 'navigation.courseRhumbline.nextPoint.position',
+                  value: { latitude: lat, longitude: lon }
+                },
+                {
+                  path: 'navigation.courseRhumbline.nextPoint.name',
+                  value: name
                 }
-              }
-            ]
-          }]
+              ]
+            }]
+          }
+
+          app.handleMessage(plugin.ic, delta)
+          res.json({ ok: true })
+        } catch (e) {
+          res.status(500).json({ ok: false, error: e.message || String(e) })
         }
+      })
 
-        app.handleMessage(pluginId, delta)
-        res.json({ ok: true })
-      } catch (e) {
-        res.status(500).json({ ok: false, error: e.message || String(e) })
-      }
-    })
+      router.post('/plugins/${plugin.id}/show', (req, res) => {
+        const wp = req.body && req.body.waypoint ? req.body.waypoint : null
 
-    app.registerRouter(mountPath, router)
-    app.setPluginStatus(`Webapp available at ${mountPath}`)
+        res.status(200).json({
+          result: {
+            message: 'ok'
+          }
+        })
+      })
+    }
+
+    let stream = app.streambundle.getSelfStream('navigation.position')
+    if (options && options.interval > 0) {
+      stream = stream.debounceImmediate(options.interval * 1000)
+    } else {
+      stream = stream.take(1)
+    }
+    plugin.unsubscribes.push(
+        stream.onValue(function (position) {})
+    )
   }
 
   plugin.stop = function () {
-    router = null
-    app.setPluginStatus('Stopped')
+    plugin.unsubscribes.forEach(f => f())
   }
 
   return plugin
