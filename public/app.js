@@ -27,6 +27,10 @@ const state = {
   // Mapping from resource key to DOM row for incremental updates.
   rows: new Map()
 }
+// Websocket monitor handles.
+const WS_CHECK_INTERVAL = 7000
+let liveSocket = null
+let liveSocketMonitor = null
 // Helper to build fully qualified Signal K v2 resource endpoints.
 const RES_ENDPOINT = (type) => `/signalk/v2/api/resources/${type}`
 
@@ -185,6 +189,18 @@ function isPreviewableMime(mime) {
   return mime && (mime.startsWith('image/') || mime.startsWith('audio/') || mime.startsWith('video/') || mime === 'application/pdf')
 }
 
+// Suggest an editor mode based on MIME type.
+function preferredEditorForMime(mime) {
+  const m = (mime || '').toLowerCase()
+  if (!m) return ''
+  if (m === 'text') return 'text'
+  if (m.startsWith('image/')) return 'image'
+  if (m.startsWith('text/')) return 'text'
+  if (m === 'application/json' || m === 'application/geo+json' || m === 'application/xml' || m === 'text/xml' || m === 'text/html' || m === 'application/xhtml+xml') return 'text'
+  if (m === 'application/gpx+xml' || m === 'application/vnd.google-earth.kml+xml') return 'text'
+  return ''
+}
+
 // Build a binary preview node depending on MIME and data.
 function previewBinary(mime, data) {
   // Wrapper for all binary previews.
@@ -233,6 +249,7 @@ function previewBinary(mime, data) {
     const iframe = document.createElement('iframe')
     iframe.src = dataUrl
     iframe.className = 'preview__frame'
+    if (filesState.viewerFullscreen) iframe.classList.add('preview__frame--full')
     wrap.appendChild(iframe)
     return wrap
   }
@@ -369,7 +386,7 @@ async function remotePreview(relPath) {
     // Build metadata string for display.
     const meta = `${relPath} • ${j.mime || j.kind} • ${humanSize(j.size)}`
     filesState.selectedRemote = relPath
-    filesState.previewMime = j.mime || j.kind || ''
+    filesState.previewMime = (j.mime || j.kind || '').toLowerCase()
     filesState.editorPath = relPath
     filesState.viewerMode = 'preview'
     filesState.viewerMetaText = meta
@@ -408,9 +425,25 @@ function renderFiles() {
   const isPreview = filesState.viewerMode === 'preview'
   const isText = filesState.viewerMode === 'text'
   const isImage = filesState.viewerMode === 'image'
+  // Editing-specific toggles.
+  const isEditing = isText || isImage
+  const hasSelection = !!filesState.selectedRemote
+  const preferred = preferredEditorForMime(filesState.previewMime)
+  const allowTextEdit = !hasSelection || preferred === 'text'
+  const allowImageEdit = !hasSelection || preferred === 'image'
+  setHidden($('#btnSaveEditor'), !isEditing)
+  setHidden($('#btnCloseEditor'), !isEditing)
+  setHidden($('#btnOpenText'), isEditing)
+  setHidden($('#btnOpenImage'), isEditing)
   setHidden($('#previewBlock'), !isPreview)
   setHidden($('#textEditorWrap'), !isText)
   setHidden($('#imageEditorWrap'), !isImage)
+  const btnEditSel = $('#btnEditSelected')
+  if (btnEditSel) btnEditSel.disabled = !hasSelection || (!allowTextEdit && !allowImageEdit)
+  const btnOpenText = $('#btnOpenText')
+  if (btnOpenText) btnOpenText.disabled = hasSelection && !allowTextEdit
+  const btnOpenImage = $('#btnOpenImage')
+  if (btnOpenImage) btnOpenImage.disabled = hasSelection && !allowImageEdit
   if (!filesState.selectedRemote && isPreview) {
     setPreview('Select a file…', previewText(''))
   }
@@ -421,6 +454,9 @@ function renderFiles() {
   } else {
     $('#viewerMeta').textContent = filesState.editorPath ? `${modeLabel} — ${filesState.editorPath}` : `${modeLabel} — new file`
   }
+  document.querySelectorAll('.preview__frame').forEach((el) => {
+    el.classList.toggle('preview__frame--full', filesState.viewerFullscreen)
+  })
 }
 
 // Move up one directory level when possible.
@@ -549,6 +585,7 @@ async function remoteDelete(pathRel) {
 function setStatus(text, ok = true) {
   // Find status element.
   const el = $('#status')
+  if (!el) return
   // Write provided text.
   el.textContent = text
   // Colorize based on success flag.
@@ -631,6 +668,39 @@ function computeDerived(item) {
     item.distanceNm = null
     item.bearing = null
   }
+}
+
+// Build a waypoint payload including GeoJSON feature metadata.
+function buildWaypointPayload({ id, name, description, position, icon, existing }) {
+  const payload = existing ? JSON.parse(JSON.stringify(existing)) : {}
+  if (id) payload.id = id
+  if (name !== undefined) payload.name = name
+  if (description !== undefined) payload.description = description
+
+  const lat = Number(position?.latitude)
+  const lon = Number(position?.longitude)
+  const hasCoords = !Number.isNaN(lat) && !Number.isNaN(lon)
+
+  if (hasCoords) {
+    payload.position = { latitude: lat, longitude: lon }
+    payload.feature = payload.feature || {}
+    payload.feature.type = 'Feature'
+    payload.feature.geometry = { type: 'Point', coordinates: [lon, lat] }
+    const fp = { ...(payload.feature.properties || {}) }
+    fp.kind = 'waypoint'
+    if (name !== undefined) fp.name = name
+    if (description !== undefined) fp.description = description
+    if (icon) fp.icon = icon
+    payload.feature.properties = fp
+  }
+
+  const props = { ...(payload.properties || {}) }
+  if (icon) props.icon = icon
+  else delete props.icon
+  if (Object.keys(props).length) payload.properties = props
+  else delete payload.properties
+
+  return payload
 }
 
 // Return list of items for the current tab.
@@ -765,6 +835,8 @@ function render() {
   setHidden($('#filesView'), !isFiles)
   setHidden($('#tableWrap'), isFiles)
   setHidden($('#filtersPanel'), isFiles)
+  setHidden($('#contentToolbar'), isFiles)
+  setHidden($('#contentActions'), isFiles)
   $('#listPager').classList.toggle('hidden', isFiles)
   // Special case rendering for files tab.
   if (isFiles) {
@@ -781,6 +853,10 @@ function render() {
     if (state.tab === 'waypoints') computeDerived(it)
     return it
   })
+  $('#btnCreateHere')?.setAttribute('aria-disabled', state.tab !== 'waypoints')
+  if ($('#btnCreateHere')) $('#btnCreateHere').disabled = state.tab !== 'waypoints'
+  if ($('#btnImport')) $('#btnImport').disabled = state.tab !== 'waypoints'
+  if ($('#btnExport')) $('#btnExport').disabled = state.tab !== 'waypoints'
   // Apply filters.
   list = applyFilters(list)
   // Apply sorting.
@@ -916,13 +992,14 @@ async function saveWaypoint() {
   const orig = state.resources.waypoints[id]
   if (!orig) { setStatus('Waypoint not found in cache', false); return }
 
-  const updated = JSON.parse(JSON.stringify(orig))
-  updated.name = name
-  updated.description = description
-  updated.position = { latitude: lat, longitude: lon }
-  updated.properties = updated.properties || {}
-  if (icon) updated.properties.icon = icon
-  else delete updated.properties.icon
+  const updated = buildWaypointPayload({
+    id,
+    name,
+    description,
+    position: { latitude: lat, longitude: lon },
+    icon,
+    existing: orig
+  })
 
   try {
     setStatus('Saving…')
@@ -969,7 +1046,13 @@ async function createAtVesselPosition() {
   if (!state.vesselPos) { setStatus('No vessel position available', false); return }
   const name = `WP ${new Date().toISOString().slice(11,19)}`
   const id = genUuid()
-  const wp = { name, description: 'Created from Navigation Manager', position: { ...state.vesselPos }, properties: { icon: 'waypoint' }, id }
+  const wp = buildWaypointPayload({
+    id,
+    name,
+    description: 'Created from Navigation Manager',
+    position: { latitude: state.vesselPos.latitude, longitude: state.vesselPos.longitude },
+    icon: 'waypoint'
+  })
   try {
     setStatus('Creating…')
     const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(wp) })
@@ -1012,18 +1095,21 @@ async function doImport() {
     if (fmtSel === 'kml') items = parseKML(text)
     if (fmtSel === 'geojson') items = parseGeoJSON(text)
 
-    const creates = items.filter(x => x.kind === 'waypoint').map(it => ({
-      name: it.name || 'Waypoint',
-      description: it.description || '',
-      position: { latitude: it.latitude, longitude: it.longitude },
-      properties: { icon: it.icon || 'waypoint' }
-    }))
+    const creates = items.filter(x => x.kind === 'waypoint').map(it => {
+      const uuid = genUuid()
+      return buildWaypointPayload({
+        id: uuid,
+        name: it.name || 'Waypoint',
+        description: it.description || '',
+        position: { latitude: it.latitude, longitude: it.longitude },
+        icon: it.icon || 'waypoint'
+      })
+    })
     if (!creates.length) throw new Error('No importable waypoints found')
 
     setStatus(`Importing ${creates.length} waypoint(s)…`)
     for (const c of creates) {
-      const uuid = genUuid()
-      const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(uuid)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...c, id: uuid }) })
+      const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(c.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })
       if (!res.ok) throw new Error(`Create failed: ${res.status}`)
     }
     await refresh()
@@ -1065,6 +1151,10 @@ function updateWaypointMetrics() {
 
 // Open text editor for existing or new files.
 async function openTextEditor(existingPath) {
+  if (existingPath && preferredEditorForMime(filesState.previewMime) !== 'text') {
+    setStatus('Text editor available for text-based files only', false)
+    return
+  }
   filesState.viewerMode = 'text'
   filesState.editorPath = existingPath || buildRelPath('new-file.txt')
   filesState.viewerFullscreen = false
@@ -1081,6 +1171,10 @@ async function openTextEditor(existingPath) {
 
 // Open image editor with a selected image file or current preview.
 async function openImageEditor(existingPath) {
+  if (existingPath && preferredEditorForMime(filesState.previewMime) !== 'image') {
+    setStatus('Image editor available for image files only', false)
+    return
+  }
   filesState.viewerMode = 'image'
   filesState.editorPath = existingPath || buildRelPath('new-image.png')
   filesState.viewerFullscreen = false
@@ -1175,8 +1269,10 @@ function wire() {
   $('#btnOpenImageNew')?.addEventListener('click', () => openImageEditor())
   $('#btnEditSelected')?.addEventListener('click', () => {
     if (!filesState.selectedRemote) { setStatus('Select a remote file to edit', false); return }
-    if (filesState.previewMime?.startsWith('image/')) openImageEditor(filesState.selectedRemote)
-    else openTextEditor(filesState.selectedRemote)
+    const pref = preferredEditorForMime(filesState.previewMime)
+    if (pref === 'image') openImageEditor(filesState.selectedRemote)
+    else if (pref === 'text') openTextEditor(filesState.selectedRemote)
+    else setStatus('Editing available for text or image files only', false)
   })
   $('#btnMoveSelected')?.addEventListener('click', () => {
     if (!filesState.selectedRemote) { setStatus('Select a file first', false); return }
@@ -1215,11 +1311,23 @@ function handleLiveUpdate(data) {
   if (state.tab === 'waypoints') updateWaypointMetrics()
 }
 
+// Periodically verify websocket health.
+function monitorWS() {
+  if (liveSocketMonitor) clearInterval(liveSocketMonitor)
+  liveSocketMonitor = setInterval(() => {
+    const ready = liveSocket && (liveSocket.readyState === WebSocket.OPEN || liveSocket.readyState === WebSocket.CONNECTING)
+    if (!ready) connectWS(true)
+  }, WS_CHECK_INTERVAL)
+}
+
 // Establish websocket connection for live vessel position.
-function connectWS() {
+function connectWS(isRetry=false) {
+  if (liveSocket && (liveSocket.readyState === WebSocket.OPEN || liveSocket.readyState === WebSocket.CONNECTING)) return
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   const url = `${proto}://${location.host}/signalk/v1/stream?subscribe=none`
   const ws = new WebSocket(url)
+  liveSocket = ws
+  monitorWS()
   ws.onopen = () => {
     setStatus('Live connected', true)
     ws.send(JSON.stringify({ context:'vessels.self', subscribe:[{ path:'navigation.position', period:1000 }] }))
@@ -1230,7 +1338,14 @@ function connectWS() {
       handleLiveUpdate(data)
     } catch {}
   }
-  ws.onclose = () => { setStatus('Live disconnected (retrying)…', false); setTimeout(connectWS, 2000) }
+  ws.onerror = () => {
+    if (liveSocket === ws) liveSocket = null
+  }
+  ws.onclose = () => {
+    if (liveSocket === ws) liveSocket = null
+    setStatus('Live disconnected (retrying)…', false)
+    setTimeout(() => connectWS(true), 2000)
+  }
 }
 
 // Boot sequence: load icons, wire events, refresh data, load files, and connect to websocket.
