@@ -12,6 +12,8 @@ const API_BASE = `/plugins/${PLUGIN_ID}`
 const state = {
   // Current active tab.
   tab: 'waypoints',
+  // Pagination tracking per tab.
+  page: { waypoints: 1, routes: 1, files: 1 },
   // Cached resources keyed by type.
   resources: { waypoints: {}, routes: {}, tracks: {} },
   // Currently rendered list items for the active tab.
@@ -28,6 +30,17 @@ const state = {
 // Helper to build fully qualified Signal K v2 resource endpoints.
 const RES_ENDPOINT = (type) => `/signalk/v2/api/resources/${type}`
 
+// Generate a UUID for resource identifiers with Date fallback.
+function genUuid() {
+  if (crypto?.randomUUID) return crypto.randomUUID()
+  const t = Date.now().toString(16)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  }) + '-' + t.slice(-4)
+}
+
 // State dedicated to remote file operations and editors.
 const filesState = {
   // Current remote path (relative to configured root).
@@ -36,19 +49,26 @@ const filesState = {
   remoteEntries: [],
   // Currently selected remote file path (relative).
   selectedRemote: null,
-  // Track if the preview overlay should occupy the full viewport.
-  previewFullscreen: false,
-  // Track if an editor overlay should occupy the full viewport.
-  editorFullscreen: false,
-  // Current editor mode: null | 'text' | 'image'.
-  editorMode: null,
+  // Track if combined viewer overlay should occupy the full viewport.
+  viewerFullscreen: false,
+  // Current viewer mode: 'preview' | 'text' | 'image'.
+  viewerMode: 'preview',
   // Current working path for the editor (new or existing file).
   editorPath: '',
-  // Buffer used for image editing previews.
+  // Buffer used for image editing previews (base64 w/o header).
   editorImageData: null,
   // Cached preview mime to decide available actions.
-  previewMime: ''
+  previewMime: '',
+  // Meta text for viewer header.
+  viewerMetaText: 'Select a file…',
+  // TinyMCE editor instance.
+  tinyEditor: null,
+  // Painterro instance.
+  painter: null
 }
+// Default page sizes to avoid scrolling.
+const PAGE_SIZE = 8
+const FILES_PAGE_SIZE = 10
 
 // Human-friendly formatting for byte sizes.
 function humanSize(bytes) {
@@ -96,6 +116,55 @@ function arrayBufferToBase64(buf) {
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
   // Encode binary to base64.
   return btoa(binary)
+}
+
+// Initialize TinyMCE editor once and return the instance.
+async function ensureTiny() {
+  if (filesState.tinyEditor) return filesState.tinyEditor
+  if (!window.tinymce) throw new Error('TinyMCE not loaded')
+  const [inst] = await tinymce.init({
+    selector: '#textEditor',
+    menubar: false,
+    toolbar: 'undo redo | bold italic underline | bullist numlist | alignleft aligncenter alignright | removeformat',
+    height: 280,
+    skin: 'oxide-dark',
+    content_css: 'dark'
+  })
+  filesState.tinyEditor = inst
+  return inst
+}
+
+// Helper to set text editor content.
+async function setTextEditorValue(text) {
+  try {
+    const ed = await ensureTiny()
+    ed.setContent((text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'))
+  } catch {
+    $('#textEditor').value = text || ''
+  }
+}
+
+// Helper to get text editor content as plain text.
+function getTextEditorValue() {
+  const ed = filesState.tinyEditor
+  if (ed) return ed.getContent({ format: 'text' }) || ''
+  return $('#textEditor').value || ''
+}
+
+// Initialize Painterro for inline image editing.
+function ensurePainter() {
+  if (filesState.painter) return filesState.painter
+  if (!window.Painterro) throw new Error('Painterro not loaded')
+  filesState.painter = Painterro({
+    id: 'imageEditorHost',
+    hiddenTools: ['save', 'open', 'resize'],
+    saveHandler: (image, done) => {
+      filesState.editorImageData = (image.asDataURL() || '').split(',')[1]
+      setStatus('Image captured', true)
+      done(true)
+    }
+  })
+  return filesState.painter
 }
 
 // Build a text preview node for the preview panel.
@@ -186,6 +255,8 @@ async function remoteList(pathRel='') {
   filesState.remoteEntries = j.entries || []
   filesState.selectedRemote = null
   filesState.previewMime = ''
+  filesState.viewerMetaText = 'Select a file…'
+  state.page.files = 1
   // Render file panels to reflect new state.
   renderFiles()
 }
@@ -206,8 +277,14 @@ function renderRemoteList() {
   const host = $('#remoteList')
   // Clear previous elements.
   host.innerHTML = ''
+  // Paginate entries.
+  const paged = paginate(filesState.remoteEntries, state.page.files, FILES_PAGE_SIZE)
+  state.page.files = paged.page
+  $('#filesPagerInfo').textContent = `Page ${paged.page} / ${paged.totalPages}`
+  $('#btnFilesPrev').disabled = paged.page <= 1
+  $('#btnFilesNext').disabled = paged.page >= paged.totalPages
   // Loop over returned entries.
-  for (const e of filesState.remoteEntries) {
+  for (const e of paged.items) {
     // Create row container.
     const row = document.createElement('div')
     // Apply class for styling.
@@ -289,10 +366,13 @@ async function remotePreview(relPath) {
     // Throw friendly error when request fails.
     if (!res.ok || !j.ok) throw new Error(j.error || `Read failed: ${res.status}`)
     // Remember selected path and mime for follow-up actions.
-    filesState.selectedRemote = relPath
-    filesState.previewMime = j.mime || j.kind || ''
     // Build metadata string for display.
     const meta = `${relPath} • ${j.mime || j.kind} • ${humanSize(j.size)}`
+    filesState.selectedRemote = relPath
+    filesState.previewMime = j.mime || j.kind || ''
+    filesState.editorPath = relPath
+    filesState.viewerMode = 'preview'
+    filesState.viewerMetaText = meta
     // Render text preview.
     if (j.kind === 'text') {
       setPreview(meta, previewText(j.text || ''))
@@ -308,7 +388,10 @@ async function remotePreview(relPath) {
   } catch (e) {
     // Surface preview errors in the panel.
     setPreview('Preview error', previewText(e.message || String(e)))
+    filesState.viewerMetaText = 'Preview error'
+    filesState.previewMime = ''
   }
+  renderFiles()
 }
 
 // Render the files view (breadcrumbs, list, preview, and editor buttons).
@@ -317,14 +400,27 @@ function renderFiles() {
   renderCrumbs()
   // Repaint remote list items.
   renderRemoteList()
-  // Toggle preview fullscreen class.
-  document.querySelector('.preview').classList.toggle('preview--full', filesState.previewFullscreen)
-  // Toggle editor overlay visibility.
-  setHidden($('#editorPanel'), filesState.editorMode === null)
-  // Update editor fullscreen class.
-  $('#editorPanel')?.classList.toggle('editor--full', filesState.editorFullscreen)
-  // Reflect editor meta text.
-  $('#editorMeta').textContent = filesState.editorMode ? `${filesState.editorMode === 'text' ? 'Text' : 'Image'} editor — ${filesState.editorPath || 'unsaved'}` : 'No editor open'
+  const viewer = $('#viewerPanel')
+  viewer?.classList.toggle('viewer--full', filesState.viewerFullscreen)
+  setHidden($('#btnExitViewport'), !filesState.viewerFullscreen)
+  setHidden($('#btnViewerFullscreen'), filesState.viewerFullscreen)
+  // Toggle preview/editor visibility based on mode.
+  const isPreview = filesState.viewerMode === 'preview'
+  const isText = filesState.viewerMode === 'text'
+  const isImage = filesState.viewerMode === 'image'
+  setHidden($('#previewBlock'), !isPreview)
+  setHidden($('#textEditorWrap'), !isText)
+  setHidden($('#imageEditorWrap'), !isImage)
+  if (!filesState.selectedRemote && isPreview) {
+    setPreview('Select a file…', previewText(''))
+  }
+  // Update meta label.
+  const modeLabel = isPreview ? 'Preview' : (isText ? 'Text editor' : 'Image editor')
+  if (isPreview && filesState.viewerMetaText) {
+    $('#viewerMeta').textContent = filesState.viewerMetaText
+  } else {
+    $('#viewerMeta').textContent = filesState.editorPath ? `${modeLabel} — ${filesState.editorPath}` : `${modeLabel} — new file`
+  }
 }
 
 // Move up one directory level when possible.
@@ -418,6 +514,19 @@ async function remoteRename(pathRel, newName) {
   // Update selection and refresh list.
   filesState.selectedRemote = newRel
   await remoteList(filesState.remotePath)
+  return true
+}
+
+// Move a remote file to an arbitrary path.
+async function remoteMove(pathRel) {
+  const dest = prompt('Move to path (relative to root):', pathRel)
+  if (!dest || dest === pathRel) return
+  const res = await fetch(`${API_BASE}/files/rename`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, newPath: dest }) })
+  const j = await res.json().catch(() => ({}))
+  if (!res.ok || !j.ok) { setStatus(j.error || `Move failed: ${res.status}`, false); return false }
+  filesState.selectedRemote = dest
+  await remoteList(filesState.remotePath)
+  await remotePreview(dest)
   return true
 }
 
@@ -577,6 +686,14 @@ function applySort(list) {
   return [...list].sort((a, b) => (getv(a) < getv(b) ? -1 : getv(a) > getv(b) ? 1 : 0) * dir)
 }
 
+// Slice list according to pagination settings.
+function paginate(list, page, size) {
+  const totalPages = Math.max(1, Math.ceil(list.length / size))
+  const current = Math.min(Math.max(page, 1), totalPages)
+  const start = (current - 1) * size
+  return { page: current, totalPages, items: list.slice(start, start + size) }
+}
+
 // Render an icon cell using loaded manifest.
 function renderIconCell(iconId) {
   // Wrapper span for icon image.
@@ -648,6 +765,7 @@ function render() {
   setHidden($('#filesView'), !isFiles)
   setHidden($('#tableWrap'), isFiles)
   setHidden($('#filtersPanel'), isFiles)
+  $('#listPager').classList.toggle('hidden', isFiles)
   // Special case rendering for files tab.
   if (isFiles) {
     $('#listTitle').textContent = 'Files'
@@ -669,6 +787,14 @@ function render() {
   list = applySort(list)
   // Store list for future access.
   state.list = list
+  // Apply pagination.
+  const paged = paginate(list, state.page[state.tab], PAGE_SIZE)
+  state.page[state.tab] = paged.page
+  const viewList = paged.items
+  // Update pager controls.
+  $('#pagerInfo').textContent = `Page ${paged.page} / ${paged.totalPages}`
+  $('#btnPagePrev').disabled = paged.page <= 1
+  $('#btnPageNext').disabled = paged.page >= paged.totalPages
 
   // Update summary meta text.
   $('#listMeta').textContent = `${list.length} item(s) • selected: ${state.selected.size}`
@@ -680,7 +806,7 @@ function render() {
   // Reset row map for incremental updates.
   state.rows.clear()
   // Build rows for each item.
-  for (const it of list) {
+  for (const it of viewList) {
     const tr = document.createElement('tr')
 
     const tdSel = document.createElement('td')
@@ -842,8 +968,8 @@ async function bulkDelete() {
 async function createAtVesselPosition() {
   if (!state.vesselPos) { setStatus('No vessel position available', false); return }
   const name = `WP ${new Date().toISOString().slice(11,19)}`
-  const id = `wp-${Date.now()}`
-  const wp = { name, description: 'Created from Navigation Manager', position: { ...state.vesselPos }, properties: { icon: 'waypoint' } }
+  const id = genUuid()
+  const wp = { name, description: 'Created from Navigation Manager', position: { ...state.vesselPos }, properties: { icon: 'waypoint' }, id }
   try {
     setStatus('Creating…')
     const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(wp) })
@@ -896,7 +1022,8 @@ async function doImport() {
 
     setStatus(`Importing ${creates.length} waypoint(s)…`)
     for (const c of creates) {
-      const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(`wp-${Date.now()}-${Math.random().toString(16).slice(2,6)}`)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })
+      const uuid = genUuid()
+      const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(uuid)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...c, id: uuid }) })
       if (!res.ok) throw new Error(`Create failed: ${res.status}`)
     }
     await refresh()
@@ -909,6 +1036,7 @@ async function doImport() {
 function setTab(tab) {
   state.tab = tab
   state.selected.clear()
+  state.page[tab] = 1
   document.querySelectorAll('.segmented__btn').forEach(b => b.classList.toggle('segmented__btn--active', b.dataset.tab === tab))
   render()
 }
@@ -937,68 +1065,85 @@ function updateWaypointMetrics() {
 
 // Open text editor for existing or new files.
 async function openTextEditor(existingPath) {
-  filesState.editorMode = 'text'
+  filesState.viewerMode = 'text'
   filesState.editorPath = existingPath || buildRelPath('new-file.txt')
-  filesState.editorFullscreen = false
-  const textArea = $('#textEditor')
-  textArea.value = ''
+  filesState.viewerFullscreen = false
+  filesState.selectedRemote = existingPath || filesState.selectedRemote
+  let text = ''
   if (existingPath) {
     const res = await fetch(`${API_BASE}/files/read?path=${encodeURIComponent(existingPath)}`)
     const j = await res.json()
-    if (res.ok && j.ok && j.kind === 'text') textArea.value = j.text || ''
+    if (res.ok && j.ok && j.kind === 'text') text = j.text || ''
   }
+  await setTextEditorValue(text)
   renderFiles()
 }
 
 // Open image editor with a selected image file or current preview.
 async function openImageEditor(existingPath) {
-  filesState.editorMode = 'image'
+  filesState.viewerMode = 'image'
   filesState.editorPath = existingPath || buildRelPath('new-image.png')
-  filesState.editorFullscreen = false
+  filesState.viewerFullscreen = false
   filesState.editorImageData = null
-  $('#imagePreview').src = ''
+  filesState.selectedRemote = existingPath || filesState.selectedRemote
+  let painter
+  try {
+    painter = ensurePainter()
+  } catch (e) {
+    setStatus(e.message || String(e), false)
+    return
+  }
+  let mime = 'image/png'
   if (existingPath) {
     const res = await fetch(`${API_BASE}/files/read?path=${encodeURIComponent(existingPath)}`)
     const j = await res.json()
     if (res.ok && j.ok && j.kind === 'binary' && j.data) {
       filesState.editorImageData = j.data
-      $('#imagePreview').src = `data:${j.mime};base64,${j.data}`
+      mime = j.mime || mime
+      painter.show(`data:${mime};base64,${j.data}`)
+    } else {
+      painter.show()
     }
+  } else {
+    painter.show()
   }
   renderFiles()
 }
 
-// Handle file input change for image editor.
-async function handleImagePick(file) {
-  if (!file) return
-  const buf = await file.arrayBuffer()
-  const b64 = arrayBufferToBase64(buf)
-  filesState.editorImageData = b64
-  $('#imagePreview').src = `data:${file.type || 'image/png'};base64,${b64}`
-}
-
 // Persist current editor buffer to the server.
 async function saveEditor() {
-  if (!filesState.editorMode) return
-  if (filesState.editorMode === 'text') {
-    const ok = await remoteSaveText(filesState.editorPath, $('#textEditor').value)
+  if (!filesState.viewerMode || filesState.viewerMode === 'preview') return
+  if (filesState.viewerMode === 'text') {
+    const ok = await remoteSaveText(filesState.editorPath, getTextEditorValue())
     if (ok) await remoteList(filesState.remotePath)
-  } else if (filesState.editorMode === 'image') {
+  } else if (filesState.viewerMode === 'image') {
+    try { filesState.painter?.save() } catch {}
     if (!filesState.editorImageData) { setStatus('Pick an image to save', false); return }
     const ok = await remoteSaveImage(filesState.editorPath, filesState.editorImageData)
     if (ok) await remoteList(filesState.remotePath)
   }
 }
 
-// Toggle fullscreen state for preview panel.
-function togglePreviewFullscreen() {
-  filesState.previewFullscreen = !filesState.previewFullscreen
+// Toggle fullscreen state for combined viewer.
+function toggleViewerFullscreen() {
+  filesState.viewerFullscreen = true
   renderFiles()
 }
 
-// Toggle fullscreen state for editor panel.
-function toggleEditorFullscreen() {
-  filesState.editorFullscreen = !filesState.editorFullscreen
+// Exit fullscreen viewer mode.
+function exitViewerFullscreen() {
+  filesState.viewerFullscreen = false
+  renderFiles()
+}
+
+// Close any open editor and return to preview mode.
+function closeEditors() {
+  filesState.viewerMode = 'preview'
+  filesState.editorPath = ''
+  filesState.selectedRemote = null
+  filesState.viewerMetaText = 'Select a file…'
+  filesState.previewMime = ''
+  setPreview('Select a file…', previewText(''))
   renderFiles()
 }
 
@@ -1006,9 +1151,11 @@ function toggleEditorFullscreen() {
 function wire() {
   document.querySelectorAll('.segmented__btn').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)))
   $('#btnRefresh').addEventListener('click', refresh)
+  $('#btnPagePrev').addEventListener('click', () => { state.page[state.tab] = Math.max(1, (state.page[state.tab] || 1) - 1); render() })
+  $('#btnPageNext').addEventListener('click', () => { state.page[state.tab] = (state.page[state.tab] || 1) + 1; render() })
   ;['filterText','filterWithinNm','filterIcon','sortBy','sortOrder'].forEach(id => {
-    $(`#${id}`).addEventListener('input', render)
-    $(`#${id}`).addEventListener('change', render)
+    $(`#${id}`).addEventListener('input', () => { state.page[state.tab] = 1; render() })
+    $(`#${id}`).addEventListener('change', () => { state.page[state.tab] = 1; render() })
   })
   $('#selectAll').addEventListener('change', (e) => setSelectAll(e.target.checked))
   $('#selectAllHeader').addEventListener('change', (e) => setSelectAll(e.target.checked))
@@ -1022,12 +1169,18 @@ function wire() {
   $('#btnRemoteRefresh')?.addEventListener('click', () => remoteList(filesState.remotePath))
   $('#btnRemoteMkdir')?.addEventListener('click', remoteMkdir)
   $('#remoteUpload')?.addEventListener('change', (e) => remoteUpload(e.target.files))
+  $('#btnFilesPrev')?.addEventListener('click', () => { state.page.files = Math.max(1, (state.page.files || 1) - 1); renderFiles() })
+  $('#btnFilesNext')?.addEventListener('click', () => { state.page.files = (state.page.files || 1) + 1; renderFiles() })
   $('#btnOpenTextNew')?.addEventListener('click', () => openTextEditor())
   $('#btnOpenImageNew')?.addEventListener('click', () => openImageEditor())
   $('#btnEditSelected')?.addEventListener('click', () => {
     if (!filesState.selectedRemote) { setStatus('Select a remote file to edit', false); return }
     if (filesState.previewMime?.startsWith('image/')) openImageEditor(filesState.selectedRemote)
     else openTextEditor(filesState.selectedRemote)
+  })
+  $('#btnMoveSelected')?.addEventListener('click', () => {
+    if (!filesState.selectedRemote) { setStatus('Select a file first', false); return }
+    remoteMove(filesState.selectedRemote)
   })
   $('#btnRenameSelected')?.addEventListener('click', async () => {
     if (!filesState.selectedRemote) { setStatus('Select a file first', false); return }
@@ -1040,10 +1193,12 @@ function wire() {
     if (!filesState.selectedRemote) { setStatus('Select a file first', false); return }
     remoteDelete(filesState.selectedRemote)
   })
-  $('#btnPreviewFullscreen')?.addEventListener('click', togglePreviewFullscreen)
-  $('#btnEditorFullscreen')?.addEventListener('click', toggleEditorFullscreen)
+  $('#btnViewerFullscreen')?.addEventListener('click', toggleViewerFullscreen)
+  $('#btnExitViewport')?.addEventListener('click', exitViewerFullscreen)
+  $('#btnOpenText')?.addEventListener('click', () => openTextEditor(filesState.selectedRemote || ''))
+  $('#btnOpenImage')?.addEventListener('click', () => openImageEditor(filesState.selectedRemote || ''))
+  $('#btnCloseEditor')?.addEventListener('click', closeEditors)
   $('#btnSaveEditor')?.addEventListener('click', saveEditor)
-  $('#imagePick')?.addEventListener('change', (e) => handleImagePick(e.target.files?.[0]))
 
   $('#doExport').addEventListener('click', (e) => { e.preventDefault(); doExport(); $('#dlgExport').close() })
   $('#doImport').addEventListener('click', (e) => { e.preventDefault(); doImport(); $('#dlgImport').close() })
