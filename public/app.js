@@ -611,8 +611,6 @@ function renderActions(it) {
   if (it.type === 'waypoints') {
     wrap.appendChild(btnTiny('goto', 'Go to', () => gotoWaypoint(it)))
     wrap.appendChild(btnTiny('map', 'Show on map', () => showOnMap(it)))
-    wrap.appendChild(btnTiny('edit', 'Edit', () => editWaypoint(it)))
-    wrap.appendChild(btnTiny('trash', 'Delete', () => deleteResource(it)))
   } else if (it.type === 'files') {
     if (it.fileType === 'file') {
       wrap.appendChild(btnTiny('download', 'Download', (ev) => {
@@ -718,7 +716,6 @@ function renderWaypointDetail(it, editMode) {
   table.appendChild(propRow('Latitude', latField))
   table.appendChild(propRow('Longitude', lonField))
   table.appendChild(propRow('Icon', iconField))
-  table.appendChild(propRow('ID', document.createTextNode(it.id)))
   return table
 }
 
@@ -729,7 +726,6 @@ function renderRouteDetail(it) {
   table.appendChild(propRow('Name', document.createTextNode(it.name || it.id)))
   table.appendChild(propRow('Description', document.createTextNode(it.description || '—')))
   table.appendChild(propRow('Updated', document.createTextNode(it.updated ? new Date(it.updated).toLocaleString() : '—')))
-  table.appendChild(propRow('ID', document.createTextNode(it.id)))
   return table
 }
 
@@ -803,7 +799,7 @@ async function renderDetail() {
   panel.classList.add('detail--open')
   const { item, preview, edit, isNew } = state.detail
   $('#detailTitle').textContent = `${item.type.slice(0, -1).toUpperCase()}: ${item.name}`
-  $('#detailMeta').textContent = item.type === 'files' ? (preview?.meta || renderCrumbs()) : `ID: ${item.id}`
+  $('#detailMeta').textContent = item.type === 'files' ? (preview?.meta || renderCrumbs()) : ``
   const actions = $('#detailActions')
   const body = $('#detailBody')
   actions.innerHTML = ''
@@ -900,7 +896,7 @@ async function saveDetail() {
       existing: orig
     })
     try {
-      setStatus('Saving…')
+      setStatus('Saving...')
       const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(item.id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -1002,7 +998,6 @@ function render() {
   if (isFiles) metaParts.push(renderCrumbs())
   metaParts.push(`${list.length} item(s)`)
   metaParts.push(`selected: ${state.selected.size}`)
-  metaParts.push(`page size: ${pageSize}`)
   $('#listMeta').textContent = metaParts.join(' • ')
 
   renderTableHead()
@@ -1068,7 +1063,7 @@ function render() {
       tr.appendChild(tdIcon)
 
       const tdName = document.createElement('td')
-      tdName.innerHTML = `<div><strong>${escapeHtml(it.name)}</strong></div><div class="muted small">${escapeHtml(it.description || '')}</div>`
+      tdName.innerHTML = `<div><strong>${escapeHtml(it.name)}</strong></div>`
       tr.appendChild(tdName)
 
       const tdDist = document.createElement('td')
@@ -1352,7 +1347,6 @@ function wire() {
   $('#btnImport').addEventListener('click', () => $('#dlgImport').showModal())
   // Files panel controls
   $('#btnRemoteUp')?.addEventListener('click', remoteUp)
-  $('#btnRemoteRefresh')?.addEventListener('click', () => remoteList(filesState.remotePath))
   $('#btnRemoteMkdir')?.addEventListener('click', remoteMkdir)
   $('#remoteUpload')?.addEventListener('change', (e) => remoteUpload(e.target.files))
   $('#btnOpenTextNew')?.addEventListener('click', () => openDetail({ type: 'files', id: buildRelPath('new-file.txt'), name: 'new-file.txt', fileType: 'file', size: 0, modified: null, description: '', raw: { name: 'new-file.txt', type: 'file' } }, { edit: true, isNew: true }))
