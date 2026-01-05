@@ -86,14 +86,14 @@ export function parseGPX(xmlText) {
     const name = r.querySelector('name')?.textContent?.trim() || 'Route'
     const desc = r.querySelector('desc')?.textContent?.trim() || ''
     const pts = [...r.querySelectorAll('rtept')].map(p => ({ latitude: parseFloat(p.getAttribute('lat')), longitude: parseFloat(p.getAttribute('lon')) }))
-      .filter(p => !Number.isNaN(p.latitude) && !Number.isNaN(p.longitude))
+        .filter(p => !Number.isNaN(p.latitude) && !Number.isNaN(p.longitude))
     if (pts.length) items.push({ kind:'route', name, description:desc, points: pts })
   }
   for (const t of [...doc.querySelectorAll('trk')]) {
     const name = t.querySelector('name')?.textContent?.trim() || 'Track'
     const desc = t.querySelector('desc')?.textContent?.trim() || ''
     const pts = [...t.querySelectorAll('trkpt')].map(p => ({ latitude: parseFloat(p.getAttribute('lat')), longitude: parseFloat(p.getAttribute('lon')) }))
-      .filter(p => !Number.isNaN(p.latitude) && !Number.isNaN(p.longitude))
+        .filter(p => !Number.isNaN(p.latitude) && !Number.isNaN(p.longitude))
     if (pts.length) items.push({ kind:'track', name, description:desc, points: pts })
   }
   return items
@@ -167,8 +167,8 @@ export function parseGeoJSON(text) {
 
   const addLine = (kind, name, description, coords) => {
     const pts = (coords || []).map(c => ({ longitude: c[0], latitude: c[1] }))
-      .filter(p => p.latitude != null && p.longitude != null && !Number.isNaN(p.latitude) && !Number.isNaN(p.longitude))
-      .map(p => ({ latitude: p.latitude, longitude: p.longitude }))
+        .filter(p => p.latitude != null && p.longitude != null && !Number.isNaN(p.latitude) && !Number.isNaN(p.longitude))
+        .map(p => ({ latitude: p.latitude, longitude: p.longitude }))
     if (pts.length) items.push({ kind, name, description, points: pts })
   }
 
