@@ -1,19 +1,19 @@
 /*
- * Signal K Node Server plugin: signalk-webapp-nav-manager
+ * Signal K Node Server plugin: signalk-mydata-plugin
  *
- * - Serves a webapp at /webapps/nav-manager
- * - Adds a small API endpoint to set "goto" to a waypoint (publishes deltas)
+ * - Serves a dependency-free webapp at /plugins/signalk-mydata-plugin
+ * - Exposes helpers for goto/show actions and remote file CRUD endpoints
+ * - Uses the Signal K v2 Resources API for waypoints/routes/tracks
  *
  * Notes:
- * - The UI uses the server's existing REST resources endpoints directly:
- *   /signalk/v1/api/resources/{waypoints|routes|tracks}
- *   so authentication/permissions are handled by the Signal K server.
+ * - Authentication/authorization are delegated to the Signal K server.
  */
 const path = require('path')
 const fs = require('fs')
 const fsp = fs.promises
 const Busboy = require('busboy')
 module.exports = function (app) {
+  // Logger helper that defers to Signal K debug/error when available.
   const logError =
       app.error ||
       (err => {
@@ -25,15 +25,17 @@ module.exports = function (app) {
         console.log(msg)
       })
 
+  // Plugin instance scaffold with lifecycle callbacks.
   var plugin = {
     unsubscribes: []
   }
 
+  // Plugin identifiers exposed to Signal K.
   plugin.id = "signalk-mydata-plugin"
   plugin.name = 'MyData (Waypoints/Routes/Files)'
   plugin.description = 'A web application to manage waypoints, tracks, and files.'
 
-
+  // JSON schema for configuration shown in the Signal K UI.
   plugin.schema = () => ({
     title: 'Manage my data',
     type: 'object',
@@ -52,19 +54,23 @@ module.exports = function (app) {
     }
   })
 
+  // Expose a status message for the plugin card.
   let lastMessage = ''
   plugin.statusMessage = function () {
     return `${lastMessage}`
   }
 
+  // Start hook invoked by Signal K when enabling the plugin.
   plugin.start = function (options) {
+    // Resolve configured remote file root (with default).
     const remoteRoot = (options && options.remoteFileRoot) ? options.remoteFileRoot : '/var/lib/signalk/mydata-files'
-    const express = app.express
 
+    // Router registration used by Signal K to mount HTTP handlers.
     plugin.registerWithRouter = (router) => {
 
-
+      // Known text extensions for inline preview.
       const TEXT_EXTS = ['.txt','.log','.md','.json','.geojson','.gpx','.kml','.csv','.xml','.yaml','.yml']
+      // Map of extensions to MIME types for accurate previews and downloads.
       const MIME_MAP = {
         '.txt': 'text/plain',
         '.log': 'text/plain',
@@ -91,6 +97,7 @@ module.exports = function (app) {
         '.webm': 'video/webm'
       }
 
+      // Safely join a root directory with a relative path while blocking traversal.
       function safeJoin(root, rel) {
         const r = (rel || '').replace(/\\/g, '/')
         const cleaned = r.replace(/^\/+/, '') // force relative
@@ -102,10 +109,12 @@ module.exports = function (app) {
         return full
       }
 
+      // Ensure a directory exists before writing into it.
       async function ensureDir(p) {
         await fsp.mkdir(p, { recursive: true })
       }
 
+      // Convert a filesystem stat result to a lightweight file entry object.
       function statToEntry(name, st) {
         return {
           name,
@@ -115,6 +124,7 @@ module.exports = function (app) {
         }
       }
 
+      // List files inside a directory relative to the configured root.
       router.get(`/files/list`, async (req, res) => {
         try {
           const rel = req.query.path || ''
@@ -133,6 +143,7 @@ module.exports = function (app) {
         }
       })
 
+      // Read file contents for inline preview (text, images, limited size).
       router.get(`/files/read`, async (req, res) => {
         try {
           const rel = req.query.path
@@ -140,7 +151,7 @@ module.exports = function (app) {
           const full = safeJoin(remoteRoot, rel)
           const st = await fsp.stat(full)
           if (!st.isFile()) return res.status(400).json({ ok: false, error: 'Not a file' })
-          if (st.size > 2 * 1024 * 1024) {
+          if (st.size > 5 * 1024 * 1024) {
             return res.status(413).json({ ok: false, error: 'File too large for inline preview (use download)' })
           }
           const buf = await fsp.readFile(full)
@@ -165,6 +176,7 @@ module.exports = function (app) {
         }
       })
 
+      // Download a file without preview limitations.
       router.get(`/files/download`, async (req, res) => {
         try {
           const rel = req.query.path
@@ -180,6 +192,7 @@ module.exports = function (app) {
         }
       })
 
+      // Create a new directory.
       router.post(`/files/mkdir`, async (req, res) => {
         try {
           const rel = req.body && req.body.path
@@ -192,6 +205,7 @@ module.exports = function (app) {
         }
       })
 
+      // Upload one or more files to the current directory.
       router.post(`/files/upload`, (req, res) => {
         const bb = Busboy({ headers: req.headers, limits: { fileSize: 50 * 1024 * 1024 } })
         let dirRel = ''
@@ -221,32 +235,90 @@ module.exports = function (app) {
         req.pipe(bb)
       })
 
+      // Write a file (text or base64 payload) for create/edit operations.
+      router.post(`/files/write`, async (req, res) => {
+        try {
+          const rel = req.body && req.body.path
+          const content = req.body && req.body.content
+          const encoding = req.body && req.body.encoding
+          if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
+          if (typeof content !== 'string') return res.status(400).json({ ok: false, error: 'Missing content' })
+          const full = safeJoin(remoteRoot, rel)
+          await ensureDir(path.dirname(full))
+          if (encoding === 'base64') {
+            await fsp.writeFile(full, Buffer.from(content, 'base64'))
+          } else {
+            await fsp.writeFile(full, content, 'utf8')
+          }
+          res.json({ ok: true })
+        } catch (e) {
+          res.status(400).json({ ok: false, error: e.message || String(e) })
+        }
+      })
+
+      // Rename a file within the configured root.
+      router.post(`/files/rename`, async (req, res) => {
+        try {
+          const rel = req.body && req.body.path
+          const newRel = req.body && req.body.newPath
+          if (!rel || !newRel) return res.status(400).json({ ok: false, error: 'Missing path/newPath' })
+          const src = safeJoin(remoteRoot, rel)
+          const dst = safeJoin(remoteRoot, newRel)
+          await ensureDir(path.dirname(dst))
+          await fsp.rename(src, dst)
+          res.json({ ok: true })
+        } catch (e) {
+          res.status(400).json({ ok: false, error: e.message || String(e) })
+        }
+      })
+
+      // Delete a file or empty directory.
+      router.post(`/files/delete`, async (req, res) => {
+        try {
+          const rel = req.body && req.body.path
+          if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
+          const target = safeJoin(remoteRoot, rel)
+          const st = await fsp.stat(target)
+          if (st.isDirectory()) {
+            const entries = await fsp.readdir(target)
+            if (entries.length) return res.status(400).json({ ok: false, error: 'Directory not empty' })
+            await fsp.rmdir(target)
+          } else {
+            await fsp.unlink(target)
+          }
+          res.json({ ok: true })
+        } catch (e) {
+          res.status(400).json({ ok: false, error: e.message || String(e) })
+        }
+      })
+
+      // Handle goto command for a selected waypoint.
       router.post(`/goto`, async (req, res) => {
         try {
-          const wp = req.body && req.body.waypoint ? req.body.waypoint : null
+          const wp = req.body && req.body.waypoint ? req.body.waypoint : null // Extract waypoint payload.
           if (!wp || !wp.position || wp.position.latitude == null || wp.position.longitude == null) {
             return res.status(400).json({ ok: false, error: 'Missing waypoint.position.{latitude,longitude}' })
           }
 
-          const lat = Number(wp.position.latitude)
-          const lon = Number(wp.position.longitude)
-          const name = wp.name || wp.id || 'Waypoint'
-          const href = wp.id ? `/signalk/v2/api/resources/waypoints/${encodeURIComponent(wp.id)}` : null
+          const lat = Number(wp.position.latitude) // Normalize latitude.
+          const lon = Number(wp.position.longitude) // Normalize longitude.
+          const name = wp.name || wp.id || 'Waypoint' // Friendly display name.
+          const href = wp.id ? `/signalk/v2/api/resources/waypoints/${encodeURIComponent(wp.id)}` : null // Optional href.
 
           const destination = {
             name,
             position: { latitude: lat, longitude: lon },
-            ...(href ? { href } : {})
+            ...(href ? { href } : {}) // Include href only when present.
           }
-          const useCourseApi = typeof app.setDestination === 'function'
+          const useCourseApi = typeof app.setDestination === 'function' // Determine if modern API is available.
           if (useCourseApi) {
-            const result = app.setDestination(destination)
+            const result = app.setDestination(destination) // Request destination via helper.
             if (result && typeof result.then === 'function') {
-              await result
+              await result // Await promise-based implementations.
             }
             lastMessage = `Destination set via Course API: ${name}`
           } else {
-            const timestamp = new Date().toISOString()
+            const timestamp = new Date().toISOString() // Timestamp for delta.
             const delta = {
               context: 'vessels.self',
               updates: [{
@@ -269,7 +341,7 @@ module.exports = function (app) {
               }]
             }
 
-            app.handleMessage(plugin.id, delta)
+            app.handleMessage(plugin.id, delta) // Send delta through Signal K.
             lastMessage = `Destination set via delta fallback: ${name}`
           }
           res.json({ ok: true })
@@ -278,6 +350,7 @@ module.exports = function (app) {
         }
       })
 
+      // Placeholder show endpoint kept for compatibility with existing UI hooks.
       router.post(`/plugins/${plugin.id}/show`, (req, res) => {
         const wp = req.body && req.body.waypoint ? req.body.waypoint : null
 
@@ -289,6 +362,7 @@ module.exports = function (app) {
       })
     }
 
+    // Subscribe to vessel position; keeps plugin active and ready for future hooks.
     let stream = app.streambundle.getSelfStream('navigation.position')
     if (options && options.interval > 0) {
       stream = stream.debounceImmediate(options.interval * 1000)
@@ -296,13 +370,15 @@ module.exports = function (app) {
       stream = stream.take(1)
     }
     plugin.unsubscribes.push(
-        stream.onValue(function (position) {})
+        stream.onValue(function (position) {}) // Keep reference for cleanup.
     )
   }
 
+  // Stop hook used by Signal K when disabling the plugin.
   plugin.stop = function () {
     plugin.unsubscribes.forEach(f => f())
   }
 
+  // Export plugin descriptor to Signal K.
   return plugin
 }
