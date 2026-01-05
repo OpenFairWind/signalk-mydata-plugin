@@ -1,17 +1,15 @@
 {
   "name": "signalk-mydata-plugin",
-  "version": "1.0.0",
-  "description": "A web application to manage waypoints, tracks, and routes.",
+  "version": "0.5.0",
+  "description": "A web application to manage waypoints, routes, and files.",
   "keywords": [
     "signalk-node-server-plugin",
     "signalk-webapp",
-    "waypoints",
-    "routes",
-    "tracks"
+    "signalk-category-utility"
   ],
   "signalk": {
-    "appIcon": "./assets/icons/icon-72x72.png",
-    "displayName": "MyData"
+    "appIcon": "./images/icon-72x72.png",
+    "displayName": "My Data"
   },
   "signalk-plugin-enabled-by-default": false,
   "repository": {
