@@ -15,7 +15,7 @@ Features:
 - Waypoint icon selection (OpenBridge icons)
 - Files area for browsing a configurable server-side root:
   - create folders, upload/download files, inline previews for text and common binary MIME types (images, audio, video, PDF)
-  - client-side preview for picked local files
+  - server-side creation, editing, renaming, and deletion with text + image editors
 - Import/Export **CSV**, **GPX**, **KML**, **geoJSON**
 
 ## Install
@@ -32,8 +32,15 @@ Default mount path: `/signalk-mydata-plugin`
 ## Notes
 
 - CRUD uses the standard Signal K resources API:
-  - `/signalk/v1/api/resources/waypoints`
-  - `/signalk/v1/api/resources/routes`
+  - `/signalk/v2/api/resources/waypoints`
+  - `/signalk/v2/api/resources/routes`
+  - `/signalk/v2/api/resources/tracks`
+
+## Documentation
+
+- [Getting started](./docs/getting_started.md)
+- [Configuration](./docs/configure.md)
+- [FairWindSK integration](./docs/fairwindsk_integration.md)
  
 
 ## License

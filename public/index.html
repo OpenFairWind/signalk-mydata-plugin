@@ -125,6 +125,11 @@
             <input id="remoteUpload" type="file" multiple style="display:none" />
           </label>
           <button class="btn btn--tiny" id="btnRemoteRefresh"><span class="icon" data-icon="refresh"></span>Refresh</button>
+          <button class="btn btn--tiny" id="btnOpenTextNew"><span class="icon" data-icon="add"></span>New text</button>
+          <button class="btn btn--tiny" id="btnOpenImageNew"><span class="icon" data-icon="add"></span>New image</button>
+          <button class="btn btn--tiny" id="btnEditSelected"><span class="icon" data-icon="edit"></span>Edit selected</button>
+          <button class="btn btn--tiny" id="btnRenameSelected"><span class="icon" data-icon="edit"></span>Rename</button>
+          <button class="btn btn--tiny btn--danger" id="btnDeleteSelected"><span class="icon" data-icon="trash"></span>Delete</button>
         </div>
       </div>
 
@@ -135,7 +140,10 @@
         </div>
 
         <div class="filespane">
-          <div class="pane__title">Preview</div>
+          <div class="pane__title preview__header">
+            <span>Preview</span>
+            <button class="btn btn--tiny" id="btnPreviewFullscreen">Fullscreen preview</button>
+          </div>
           <div class="preview">
             <div class="preview__meta" id="previewMeta">Select a file…</div>
             <div class="preview__body" id="previewBody">
@@ -143,15 +151,26 @@
             </div>
           </div>
 
-          <div class="pane__title" style="margin-top:12px">Local files</div>
-          <div class="localbar">
-            <label class="btn btn--tiny">
-              <span class="icon" data-icon="folder"></span>Choose files
-              <input id="localPick" type="file" multiple style="display:none" />
-            </label>
-            <button class="btn btn--tiny" id="btnLocalClear"><span class="icon" data-icon="trash"></span>Clear</button>
+          <div class="pane__title editor__title">
+            <span>Editor</span>
+            <button class="btn btn--tiny" id="btnEditorFullscreen">Fullscreen editor</button>
           </div>
-          <div class="filelist" id="localList"></div>
+          <div class="editor hidden" id="editorPanel">
+            <div class="editor__meta" id="editorMeta">No editor open</div>
+            <div class="editor__body">
+              <textarea id="textEditor" class="editor__text" placeholder="Edit text content here…"></textarea>
+              <div class="editor__imagewrap">
+                <img id="imagePreview" class="editor__image" alt="Image preview" />
+                <label class="btn btn--tiny">
+                  <span class="icon" data-icon="upload"></span>Pick image
+                  <input id="imagePick" type="file" accept="image/*" style="display:none" />
+                </label>
+              </div>
+            </div>
+            <div class="editor__actions">
+              <button class="btn" id="btnSaveEditor"><span class="icon" data-icon="save"></span>Save</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
