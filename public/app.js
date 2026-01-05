@@ -272,7 +272,7 @@ async function remoteList(pathRel='') {
   filesState.remoteEntries = j.entries || []
   filesState.selectedRemote = null
   filesState.previewMime = ''
-  filesState.viewerMetaText = 'Select a file…'
+  filesState.viewerMetaText = 'Select a file...'
   state.page.files = 1
   // Render file panels to reflect new state.
   renderFiles()
@@ -297,7 +297,7 @@ function renderRemoteList() {
   // Paginate entries.
   const paged = paginate(filesState.remoteEntries, state.page.files, FILES_PAGE_SIZE)
   state.page.files = paged.page
-  $('#filesPagerInfo').textContent = `Page ${paged.page} / ${paged.totalPages}`
+  $('#filesPagerInfo').textContent = `${paged.page}/${paged.totalPages}`
   $('#btnFilesPrev').disabled = paged.page <= 1
   $('#btnFilesNext').disabled = paged.page >= paged.totalPages
   // Loop over returned entries.
@@ -868,7 +868,7 @@ function render() {
   state.page[state.tab] = paged.page
   const viewList = paged.items
   // Update pager controls.
-  $('#pagerInfo').textContent = `Page ${paged.page} / ${paged.totalPages}`
+  $('#pagerInfo').textContent = `${paged.page}/${paged.totalPages}`
   $('#btnPagePrev').disabled = paged.page <= 1
   $('#btnPageNext').disabled = paged.page >= paged.totalPages
 
