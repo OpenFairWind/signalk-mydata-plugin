@@ -14,6 +14,7 @@ body{
   background:linear-gradient(180deg,#070b14,#0b1220);
   color:var(--text);
   min-height:100vh;
+  overflow:hidden;
 }
 .hidden { display: none !important; }
 code{color:#6ee7ff}
@@ -35,8 +36,11 @@ code{color:#6ee7ff}
   background:rgba(15,26,46,.35);
   padding:14px;
   overflow:auto;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
 }
-.panel__section{padding:12px; border:1px solid var(--line); border-radius:var(--r); background:rgba(15,26,46,.55); box-shadow: var(--shadow); margin-bottom:12px}
+.panel__section{padding:12px; border:1px solid var(--line); border-radius:var(--r); background:rgba(15,26,46,.55); box-shadow: var(--shadow);}
 .panel__title{font-weight:700;font-size:13px;margin-bottom:10px;color:#d6e3ff}
 .segmented{display:flex;gap:6px}
 .segmented__btn{
@@ -70,14 +74,18 @@ input,select,textarea{
 .checkbox input{width:16px; height:16px}
 .small{font-size:12px}
 .muted{color:var(--muted)}
-.content{padding:16px; height:100vh; overflow:auto;}
-.content__header{display:flex;align-items:flex-end;justify-content:space-between; gap:10px; margin-bottom:12px}
+.content{padding:16px; height:100vh; overflow:hidden; display:flex; flex-direction:column;}
+.content__header{display:flex;align-items:flex-end;justify-content:space-between; gap:10px; margin-bottom:12px; flex-wrap:wrap;}
 .content__title{font-size:18px;font-weight:800}
 .content__meta{font-size:12px;color:var(--muted)}
+.pager{display:flex; align-items:center; gap:8px;}
+.pager__info{font-size:12px; color:var(--muted);}
+.pager--tight{justify-content:space-between; width:100%; margin-top:10px;}
 .tablewrap{
   border:1px solid var(--line); border-radius:var(--r);
   background:rgba(15,26,46,.55); box-shadow: var(--shadow);
   overflow:auto;
+  flex:1;
 }
 .table{width:100%; border-collapse:collapse; min-width: 900px;}
 th,td{padding:10px 10px; border-bottom:1px solid var(--line); vertical-align:middle;}
@@ -113,7 +121,7 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
 
 /* Files panel */
 .filesview.hidden { display: none; }
-.filesview { margin-top: 12px; }
+.filesview { margin-top: 12px; flex:1; display:flex; flex-direction:column; }
 
 .filesbar {
   display:flex;
@@ -130,19 +138,22 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
 
 .filesgrid {
   display:grid;
-  grid-template-columns: 1fr 1.2fr;
+  grid-template-columns: 1fr 1.3fr;
   gap: 12px;
   margin-top: 12px;
+  height:100%;
 }
 .filespane {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px;
   background: rgba(255,255,255,0.02);
-  min-height: 420px;
+  min-height: 0;
 }
+.filelistpane{display:flex; flex-direction:column; gap:10px;}
+.filespane--viewer{display:flex; flex-direction:column;}
 .pane__title { font-size: 12px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.08em; }
-.filelist { border: 1px solid var(--line); border-radius: 8px; overflow: auto; height: 220px; }
+.filelist { border: 1px solid var(--line); border-radius: 8px; overflow: auto; max-height: 420px; }
 .fileitem {
   display:flex;
   align-items:center;
@@ -159,7 +170,7 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
 .fileitem__name { overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fileitem__meta { font-size: 12px; color: var(--muted); }
 .fileitem__actions { display:flex; gap: 6px; }
-.preview { border: 1px solid var(--line); border-radius: 8px; padding: 8px; height: 260px; display:flex; flex-direction: column; gap: 8px; }
+.preview { border: 1px solid var(--line); border-radius: 8px; padding: 8px; height: 100%; display:flex; flex-direction: column; gap: 8px; }
 .preview__meta { font-size: 12px; color: var(--muted); }
 .preview__body { flex:1; overflow: auto; border:1px solid var(--line); border-radius: 6px; padding: 8px; background: rgba(0,0,0,0.2); }
 .preview__text { margin:0; white-space: pre; font-size: 12px; }
@@ -168,26 +179,15 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
 .localbar { display:flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 
 .preview__header { display:flex; align-items:center; justify-content: space-between; }
-.preview--full {
-  position: fixed;
-  inset: 12px;
-  z-index: 50;
-  background: rgba(0,0,0,0.85);
-  border: 2px solid var(--line);
-  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-  height: calc(100vh - 24px);
-}
-.preview--full .preview__body { height:100%; }
-
-.editor { border:1px solid var(--line); border-radius: 8px; padding: 10px; background: rgba(0,0,0,0.25); display:flex; flex-direction: column; gap: 10px; }
-.editor__meta { font-size:12px; color: var(--muted); }
-.editor__body { display:flex; flex-direction: column; gap:10px; }
-.editor__text { width:100%; min-height: 160px; background:#0a1325; color:var(--text); border:1px solid var(--line); border-radius: 8px; padding:10px; }
-.editor__imagewrap { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.editor__image { max-width: 240px; max-height: 200px; border:1px solid var(--line); border-radius:8px; object-fit: contain; background:#0b1220; }
-.editor__actions { display:flex; justify-content:flex-end; }
-.editor--full { position: fixed; inset: 12px; z-index: 60; background: rgba(0,0,0,0.9); overflow:auto; }
-.editor--full .editor__body { flex-direction: column; }
+.viewer{border:1px solid var(--line); border-radius:12px; background:rgba(0,0,0,0.2); box-shadow: var(--shadow); display:flex; flex-direction:column; height:100%;}
+.viewer__header{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; border-bottom:1px solid var(--line);}
+.viewer__actions{display:flex; gap:8px; flex-wrap:wrap;}
+.viewer__body{display:grid; grid-template-rows: 1fr; gap:10px; padding:10px; overflow:hidden;}
+.editorhost{height:100%; border:1px dashed var(--line); border-radius:10px; padding:8px; background:rgba(0,0,0,0.15);}
+.editor__text{width:100%; height:100%; background:#0a1325; color:var(--text); border:1px solid var(--line); border-radius: 8px; padding:10px;}
+.editor__imagehost{width:100%; height:100%; min-height:280px;}
+.viewer--full{position:fixed; inset:12px; z-index:80; background:rgba(0,0,0,0.85); padding:12px;}
+.viewer--full .viewer__body{height:calc(100vh - 170px);}
 
 
 @media (max-width: 980px) {
@@ -195,5 +195,5 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
   .filespane { min-height: 320px; }
   .filelist { height: 200px; }
   .layout { height: auto; min-height: 100vh; }
-  .content { height: auto; }
+  .content { height: auto; overflow:auto; }
 }

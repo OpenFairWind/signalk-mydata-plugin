@@ -72,6 +72,31 @@
       "path": "arrow-up.svg"
     },
     {
+      "id": "arrow-left",
+      "label": "Previous",
+      "path": "arrow-left.svg"
+    },
+    {
+      "id": "arrow-right",
+      "label": "Next",
+      "path": "arrow-right.svg"
+    },
+    {
+      "id": "fullscreen",
+      "label": "Fullscreen",
+      "path": "fullscreen.svg"
+    },
+    {
+      "id": "close",
+      "label": "Close",
+      "path": "close.svg"
+    },
+    {
+      "id": "image",
+      "label": "Image",
+      "path": "image.svg"
+    },
+    {
       "id": "add",
       "label": "Add",
       "path": "add.svg"
