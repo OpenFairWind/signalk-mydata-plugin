@@ -24,5 +24,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0"
   }
 }
