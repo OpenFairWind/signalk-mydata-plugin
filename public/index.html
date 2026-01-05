@@ -12,10 +12,11 @@
 <main class="layout">
   <aside class="panel">
     <div class="panel__section">
-      <div class="panel__title">Browse</div>
+      <!--<div class="panel__title">Browse</div>-->
       <div class="segmented">
         <button class="segmented__btn segmented__btn--active" data-tab="waypoints">Waypoints</button>
         <button class="segmented__btn" data-tab="routes">Routes</button>
+        <button class="segmented__btn hidden" data-tab="tracks">Tracks</button>
         <button class="segmented__btn" data-tab="files">Files</button>
       </div>
     </div>
@@ -93,7 +94,6 @@
               <input id="remoteUpload" type="file" multiple style="display:none" />
               Upload
             </label>
-            <button class="btn btn--tiny" id="btnRemoteRefresh"><span class="icon" data-icon="refresh"></span></button>
             <button class="btn btn--tiny" id="btnOpenTextNew"><span class="icon" data-icon="add"></span></button>
           </div>
           <label class="checkbox checkbox--inline">
@@ -138,11 +138,13 @@
       </div>
     </div>
 
+    <!--
     <footer class="footer">
       <div class="muted small">
-        <!--Uses OpenBridge icons. Signal K resources API for CRUD. Import/export: CSV, GPX , KML.-->
+        Uses OpenBridge icons. Signal K resources API for CRUD. Import/export: CSV, GPX , KML.
       </div>
     </footer>
+    -->
   </section>
 </main>
 
