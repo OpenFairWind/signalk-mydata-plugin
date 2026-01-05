@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>MyData</title>
   <link rel="stylesheet" href="./styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/tinymce@7.4.1/tinymce.min.js" referrerpolicy="no-referrer"></script>
+  <script src="https://unpkg.com/painterro@1.2.78/build/painterro.min.js" referrerpolicy="no-referrer"></script>
 </head>
 <body>
 
@@ -96,6 +98,11 @@
     <div class="content__header">
       <div class="content__title" id="listTitle">Waypoints</div>
       <div class="content__meta" id="listMeta">—</div>
+      <div class="pager" id="listPager">
+        <button class="btn btn--tiny" id="btnPagePrev"><span class="icon" data-icon="arrow-left"></span>Prev</button>
+        <div class="pager__info" id="pagerInfo">Page 1</div>
+        <button class="btn btn--tiny" id="btnPageNext">Next <span class="icon" data-icon="arrow-right"></span></button>
+      </div>
     </div>
 
     <div class="tablewrap" id="tableWrap">
@@ -115,65 +122,70 @@
     </div>
 
     <div id="filesView" class="filesview hidden">
-      <div class="filesbar">
-        <div class="crumbs" id="remoteCrumbs"></div>
-        <div class="filesbar__actions">
-          <button class="btn btn--tiny" id="btnRemoteUp"><span class="icon" data-icon="arrow-up"></span>Up</button>
-          <button class="btn btn--tiny" id="btnRemoteMkdir"><span class="icon" data-icon="add"></span>New folder</button>
-          <label class="btn btn--tiny">
-            <span class="icon" data-icon="upload"></span>Upload
-            <input id="remoteUpload" type="file" multiple style="display:none" />
-          </label>
-          <button class="btn btn--tiny" id="btnRemoteRefresh"><span class="icon" data-icon="refresh"></span>Refresh</button>
-          <button class="btn btn--tiny" id="btnOpenTextNew"><span class="icon" data-icon="add"></span>New text</button>
-          <button class="btn btn--tiny" id="btnOpenImageNew"><span class="icon" data-icon="add"></span>New image</button>
-          <button class="btn btn--tiny" id="btnEditSelected"><span class="icon" data-icon="edit"></span>Edit selected</button>
-          <button class="btn btn--tiny" id="btnRenameSelected"><span class="icon" data-icon="edit"></span>Rename</button>
-          <button class="btn btn--tiny btn--danger" id="btnDeleteSelected"><span class="icon" data-icon="trash"></span>Delete</button>
-        </div>
-      </div>
-
-      <div class="filesgrid">
-        <div class="filespane">
-          <div class="pane__title">Remote files</div>
-          <div class="filelist" id="remoteList"></div>
-        </div>
-
-        <div class="filespane">
-          <div class="pane__title preview__header">
-            <span>Preview</span>
-            <button class="btn btn--tiny" id="btnPreviewFullscreen">Fullscreen preview</button>
+        <div class="filesbar">
+          <div class="crumbs" id="remoteCrumbs"></div>
+          <div class="filesbar__actions">
+            <button class="btn btn--tiny" id="btnRemoteUp"><span class="icon" data-icon="arrow-up"></span>Up</button>
+            <button class="btn btn--tiny" id="btnRemoteMkdir"><span class="icon" data-icon="add"></span>New folder</button>
+            <label class="btn btn--tiny">
+              <span class="icon" data-icon="upload"></span>Upload
+              <input id="remoteUpload" type="file" multiple style="display:none" />
+            </label>
+            <button class="btn btn--tiny" id="btnRemoteRefresh"><span class="icon" data-icon="refresh"></span>Refresh</button>
+            <button class="btn btn--tiny" id="btnOpenTextNew"><span class="icon" data-icon="add"></span>New text</button>
+            <button class="btn btn--tiny" id="btnOpenImageNew"><span class="icon" data-icon="add"></span>New image</button>
+            <button class="btn btn--tiny" id="btnEditSelected"><span class="icon" data-icon="edit"></span>Edit selected</button>
+            <button class="btn btn--tiny" id="btnRenameSelected"><span class="icon" data-icon="edit"></span>Rename</button>
+            <button class="btn btn--tiny" id="btnMoveSelected"><span class="icon" data-icon="arrow-right"></span>Move</button>
+            <button class="btn btn--tiny btn--danger" id="btnDeleteSelected"><span class="icon" data-icon="trash"></span>Delete</button>
           </div>
-          <div class="preview">
-            <div class="preview__meta" id="previewMeta">Select a file…</div>
-            <div class="preview__body" id="previewBody">
-              <pre class="preview__text" id="previewText"></pre>
+        </div>
+
+        <div class="filesgrid">
+          <div class="filespane filelistpane">
+            <div class="pane__title">Remote files</div>
+            <div class="filelist" id="remoteList"></div>
+            <div class="pager pager--tight" id="filesPager">
+              <button class="btn btn--tiny" id="btnFilesPrev"><span class="icon" data-icon="arrow-left"></span>Prev</button>
+              <div class="pager__info" id="filesPagerInfo">Page 1</div>
+              <button class="btn btn--tiny" id="btnFilesNext">Next <span class="icon" data-icon="arrow-right"></span></button>
             </div>
           </div>
 
-          <div class="pane__title editor__title">
-            <span>Editor</span>
-            <button class="btn btn--tiny" id="btnEditorFullscreen">Fullscreen editor</button>
-          </div>
-          <div class="editor hidden" id="editorPanel">
-            <div class="editor__meta" id="editorMeta">No editor open</div>
-            <div class="editor__body">
-              <textarea id="textEditor" class="editor__text" placeholder="Edit text content here…"></textarea>
-              <div class="editor__imagewrap">
-                <img id="imagePreview" class="editor__image" alt="Image preview" />
-                <label class="btn btn--tiny">
-                  <span class="icon" data-icon="upload"></span>Pick image
-                  <input id="imagePick" type="file" accept="image/*" style="display:none" />
-                </label>
+          <div class="filespane filespane--viewer">
+            <div class="viewer" id="viewerPanel">
+              <div class="viewer__header">
+                <div>
+                  <div class="pane__title">Preview &amp; Editor</div>
+                  <div class="muted small" id="viewerMeta">Select a file…</div>
+                </div>
+                <div class="viewer__actions">
+                  <button class="btn btn--tiny" id="btnViewerFullscreen"><span class="icon" data-icon="fullscreen"></span>Full viewport</button>
+                  <button class="btn btn--tiny btn--ghost hidden" id="btnExitViewport"><span class="icon" data-icon="close"></span>Exit full view</button>
+                  <button class="btn btn--tiny" id="btnOpenText"><span class="icon" data-icon="edit"></span>Edit text</button>
+                  <button class="btn btn--tiny" id="btnOpenImage"><span class="icon" data-icon="image"></span>Edit image</button>
+                  <button class="btn btn--tiny" id="btnCloseEditor"><span class="icon" data-icon="close"></span>Close editor</button>
+                  <button class="btn btn--tiny" id="btnSaveEditor"><span class="icon" data-icon="save"></span>Save</button>
+                </div>
+              </div>
+              <div class="viewer__body" id="viewerBody">
+                <div class="preview" id="previewBlock">
+                  <div class="preview__meta" id="previewMeta">Select a file…</div>
+                  <div class="preview__body" id="previewBody">
+                    <pre class="preview__text" id="previewText"></pre>
+                  </div>
+                </div>
+                <div class="editorhost hidden" id="textEditorWrap">
+                  <textarea id="textEditor" class="editor__text" placeholder="Edit text content here…"></textarea>
+                </div>
+                <div class="editorhost hidden" id="imageEditorWrap">
+                  <div id="imageEditorHost" class="editor__imagehost"></div>
+                </div>
               </div>
             </div>
-            <div class="editor__actions">
-              <button class="btn" id="btnSaveEditor"><span class="icon" data-icon="save"></span>Save</button>
-            </div>
           </div>
         </div>
       </div>
-    </div>
 
     <footer class="footer">
       <div class="muted small">
