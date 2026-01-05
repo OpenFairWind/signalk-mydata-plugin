@@ -14,6 +14,8 @@ const state = {
   tab: 'waypoints',
   // Pagination tracking per tab.
   page: { waypoints: 1, routes: 1, files: 1 },
+  // Dynamic page size per tab computed from viewport.
+  pageSize: { waypoints: 8, routes: 8, files: 8 },
   // Cached resources keyed by type.
   resources: { waypoints: {}, routes: {}, tracks: {} },
   // Currently rendered list items for the active tab.
@@ -25,7 +27,9 @@ const state = {
   // Icon manifest fetched at boot.
   icons: null,
   // Mapping from resource key to DOM row for incremental updates.
-  rows: new Map()
+  rows: new Map(),
+  // Detail panel state.
+  detail: { item: null, edit: false, preview: null, isNew: false }
 }
 // Websocket monitor handles.
 const WS_CHECK_INTERVAL = 7000
@@ -53,26 +57,9 @@ const filesState = {
   remoteEntries: [],
   // Currently selected remote file path (relative).
   selectedRemote: null,
-  // Track if combined viewer overlay should occupy the full viewport.
-  viewerFullscreen: false,
-  // Current viewer mode: 'preview' | 'text' | 'image'.
-  viewerMode: 'preview',
-  // Current working path for the editor (new or existing file).
-  editorPath: '',
-  // Buffer used for image editing previews (base64 w/o header).
-  editorImageData: null,
-  // Cached preview mime to decide available actions.
-  previewMime: '',
-  // Meta text for viewer header.
-  viewerMetaText: 'Select a file…',
   // TinyMCE editor instance.
-  tinyEditor: null,
-  // Painterro instance.
-  painter: null
+  tinyEditor: null
 }
-// Default page sizes to avoid scrolling.
-const PAGE_SIZE = 8
-const FILES_PAGE_SIZE = 10
 
 // Human-friendly formatting for byte sizes.
 function humanSize(bytes) {
@@ -98,39 +85,15 @@ function setHidden(el, hidden) {
   el.classList.toggle('hidden', hidden)
 }
 
-// Update the preview panel with metadata and provided node content.
-function setPreview(metaText, node) {
-  // Write meta text into the dedicated element.
-  $('#previewMeta').textContent = metaText
-  // Host element for body content.
-  const host = $('#previewBody')
-  // Clear previous children.
-  host.innerHTML = ''
-  // Append provided node when available.
-  if (node) host.appendChild(node)
-}
-
-// Convert an ArrayBuffer to a base64 string (used for images).
-function arrayBufferToBase64(buf) {
-  // Wrap in typed array for iteration.
-  const bytes = new Uint8Array(buf)
-  // Collect binary string.
-  let binary = ''
-  // Walk through bytes and build binary string.
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-  // Encode binary to base64.
-  return btoa(binary)
-}
-
 // Initialize TinyMCE editor once and return the instance.
-async function ensureTiny() {
+async function ensureTiny(selector = '#detailTextEditor') {
   if (filesState.tinyEditor) return filesState.tinyEditor
   if (!window.tinymce) throw new Error('TinyMCE not loaded')
   const [inst] = await tinymce.init({
-    selector: '#textEditor',
+    selector,
     menubar: false,
     toolbar: 'undo redo | bold italic underline | bullist numlist | alignleft aligncenter alignright | removeformat',
-    height: 280,
+    height: 320,
     skin: 'oxide-dark',
     content_css: 'dark'
   })
@@ -139,66 +102,31 @@ async function ensureTiny() {
 }
 
 // Helper to set text editor content.
-async function setTextEditorValue(text) {
+async function setTextEditorValue(text, selector = '#detailTextEditor') {
   try {
-    const ed = await ensureTiny()
-    ed.setContent((text || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'))
+    const ed = await ensureTiny(selector)
+    const safe = (text || '').split('\n').map(line => (line || '').
+      replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') || '&nbsp;')
+    ed.setContent(safe.map(l => `<div>${l}</div>`).join('') || '<div><br></div>')
   } catch {
-    $('#textEditor').value = text || ''
+    const el = document.querySelector(selector)
+    if (el) el.value = text || ''
   }
 }
 
 // Helper to get text editor content as plain text.
-function getTextEditorValue() {
+function getTextEditorValue(selector = '#detailTextEditor') {
   const ed = filesState.tinyEditor
   if (ed) return ed.getContent({ format: 'text' }) || ''
-  return $('#textEditor').value || ''
-}
-
-// Initialize Painterro for inline image editing.
-function ensurePainter() {
-  if (filesState.painter) return filesState.painter
-  if (!window.Painterro) throw new Error('Painterro not loaded')
-  filesState.painter = Painterro({
-    id: 'imageEditorHost',
-    hiddenTools: ['save', 'open', 'resize'],
-    saveHandler: (image, done) => {
-      filesState.editorImageData = (image.asDataURL() || '').split(',')[1]
-      setStatus('Image captured', true)
-      done(true)
-    }
-  })
-  return filesState.painter
-}
-
-// Build a text preview node for the preview panel.
-function previewText(text) {
-  // Create preformatted container.
-  const pre = document.createElement('pre')
-  // Apply styling class.
-  pre.className = 'preview__text'
-  // Set text content to provided text or empty string.
-  pre.textContent = text || ''
-  // Return node for insertion.
-  return pre
+  const el = document.querySelector(selector)
+  if (el) return el.value || ''
+  return ''
 }
 
 // Determine if a MIME type is previewable inline.
 function isPreviewableMime(mime) {
   // Guard against falsy values and check known prefixes.
   return mime && (mime.startsWith('image/') || mime.startsWith('audio/') || mime.startsWith('video/') || mime === 'application/pdf')
-}
-
-// Suggest an editor mode based on MIME type.
-function preferredEditorForMime(mime) {
-  const m = (mime || '').toLowerCase()
-  if (!m) return ''
-  if (m === 'text') return 'text'
-  if (m.startsWith('image/')) return 'image'
-  if (m.startsWith('text/')) return 'text'
-  if (m === 'application/json' || m === 'application/geo+json' || m === 'application/xml' || m === 'text/xml' || m === 'text/html' || m === 'application/xhtml+xml') return 'text'
-  if (m === 'application/gpx+xml' || m === 'application/vnd.google-earth.kml+xml') return 'text'
-  return ''
 }
 
 // Build a binary preview node depending on MIME and data.
@@ -249,7 +177,6 @@ function previewBinary(mime, data) {
     const iframe = document.createElement('iframe')
     iframe.src = dataUrl
     iframe.className = 'preview__frame'
-    if (filesState.viewerFullscreen) iframe.classList.add('preview__frame--full')
     wrap.appendChild(iframe)
     return wrap
   }
@@ -271,100 +198,20 @@ async function remoteList(pathRel='') {
   filesState.remotePath = j.path || ''
   filesState.remoteEntries = j.entries || []
   filesState.selectedRemote = null
-  filesState.previewMime = ''
-  filesState.viewerMetaText = 'Select a file...'
   state.page.files = 1
   // Render file panels to reflect new state.
-  renderFiles()
+  if (state.tab === 'files') render()
 }
 
 // Render breadcrumb text for remote navigation.
 function renderCrumbs() {
-  // Acquire crumb element.
-  const el = $('#remoteCrumbs')
   // Normalize remote path for display.
   const p = filesState.remotePath || ''
   // Show root indicator when empty.
-  el.textContent = p ? `/ ${p}` : '/ (root)'
+  return p ? `/ ${p}` : '/ (root)'
 }
 
 // Render the remote file list with selection support.
-function renderRemoteList() {
-  // Host container for remote entries.
-  const host = $('#remoteList')
-  // Clear previous elements.
-  host.innerHTML = ''
-  // Paginate entries.
-  const paged = paginate(filesState.remoteEntries, state.page.files, FILES_PAGE_SIZE)
-  state.page.files = paged.page
-  $('#filesPagerInfo').textContent = `${paged.page}/${paged.totalPages}`
-  $('#btnFilesPrev').disabled = paged.page <= 1
-  $('#btnFilesNext').disabled = paged.page >= paged.totalPages
-  // Loop over returned entries.
-  for (const e of paged.items) {
-    // Create row container.
-    const row = document.createElement('div')
-    // Apply class for styling.
-    row.className = 'fileitem'
-    // Determine if this row is currently selected.
-    const isSelected = filesState.selectedRemote === buildRelPath(e.name)
-    // Toggle selection styling.
-    row.classList.toggle('fileitem--active', isSelected)
-    // Left column with badge and name.
-    const left = document.createElement('div')
-    left.className = 'fileitem__left'
-    const badge = document.createElement('span')
-    badge.className = 'muted'
-    badge.textContent = e.type === 'dir' ? 'DIR' : 'FILE'
-    const name = document.createElement('div')
-    name.className = 'fileitem__name'
-    name.textContent = e.name
-    left.appendChild(badge); left.appendChild(name)
-
-    // Metadata column for sizes.
-    const meta = document.createElement('div')
-    meta.className = 'fileitem__meta'
-    meta.textContent = e.type === 'dir' ? '' : humanSize(e.size)
-
-    // Actions column for per-file actions.
-    const acts = document.createElement('div')
-    acts.className = 'fileitem__actions'
-    if (e.type === 'file') {
-      const dl = document.createElement('button')
-      dl.className = 'btn btn--tiny'
-      dl.type = 'button'
-      dl.textContent = 'Download'
-      dl.addEventListener('click', (ev) => {
-        ev.stopPropagation()
-        const rel = buildRelPath(e.name)
-        window.open(`${API_BASE}/files/download?path=${encodeURIComponent(rel)}`, '_blank')
-      })
-      acts.appendChild(dl)
-    }
-
-    // Compose the row.
-    row.appendChild(left)
-    row.appendChild(meta)
-    row.appendChild(acts)
-
-    // Click handler for navigation or preview.
-    row.addEventListener('click', async () => {
-      if (e.type === 'dir') {
-        const next = buildRelPath(e.name)
-        await remoteList(next)
-        return
-      }
-      const rel = buildRelPath(e.name)
-      filesState.selectedRemote = rel
-      await remotePreview(rel)
-      renderRemoteList()
-    })
-
-    // Append row into the list.
-    host.appendChild(row)
-  }
-}
-
 // Helper to build a relative path with the current directory prefix.
 function buildRelPath(name) {
   // Trim trailing slashes from current path.
@@ -386,79 +233,13 @@ async function remotePreview(relPath) {
     // Build metadata string for display.
     const meta = `${relPath} • ${j.mime || j.kind} • ${humanSize(j.size)}`
     filesState.selectedRemote = relPath
-    filesState.previewMime = (j.mime || j.kind || '').toLowerCase()
-    filesState.editorPath = relPath
-    filesState.viewerMode = 'preview'
-    filesState.viewerMetaText = meta
-    // Render text preview.
-    if (j.kind === 'text') {
-      setPreview(meta, previewText(j.text || ''))
-      return
-    }
-    // Render binary preview when previewable.
-    if (j.kind === 'binary' && j.data && isPreviewableMime(j.mime)) {
-      setPreview(meta, previewBinary(j.mime, j.data))
-      return
-    }
-    // Fallback for non-previewable binaries.
-    setPreview(meta, previewText('(binary file — use Download)'))
+    return { ...j, meta }
   } catch (e) {
-    // Surface preview errors in the panel.
-    setPreview('Preview error', previewText(e.message || String(e)))
-    filesState.viewerMetaText = 'Preview error'
-    filesState.previewMime = ''
+    return { ok: false, error: e.message || String(e) }
   }
-  renderFiles()
 }
 
 // Render the files view (breadcrumbs, list, preview, and editor buttons).
-function renderFiles() {
-  // Update breadcrumb text.
-  renderCrumbs()
-  // Repaint remote list items.
-  renderRemoteList()
-  const viewer = $('#viewerPanel')
-  viewer?.classList.toggle('viewer--full', filesState.viewerFullscreen)
-  setHidden($('#btnExitViewport'), !filesState.viewerFullscreen)
-  setHidden($('#btnViewerFullscreen'), filesState.viewerFullscreen)
-  // Toggle preview/editor visibility based on mode.
-  const isPreview = filesState.viewerMode === 'preview'
-  const isText = filesState.viewerMode === 'text'
-  const isImage = filesState.viewerMode === 'image'
-  // Editing-specific toggles.
-  const isEditing = isText || isImage
-  const hasSelection = !!filesState.selectedRemote
-  const preferred = preferredEditorForMime(filesState.previewMime)
-  const allowTextEdit = !hasSelection || preferred === 'text'
-  const allowImageEdit = !hasSelection || preferred === 'image'
-  setHidden($('#btnSaveEditor'), !isEditing)
-  setHidden($('#btnCloseEditor'), !isEditing)
-  setHidden($('#btnOpenText'), isEditing)
-  setHidden($('#btnOpenImage'), isEditing)
-  setHidden($('#previewBlock'), !isPreview)
-  setHidden($('#textEditorWrap'), !isText)
-  setHidden($('#imageEditorWrap'), !isImage)
-  const btnEditSel = $('#btnEditSelected')
-  if (btnEditSel) btnEditSel.disabled = !hasSelection || (!allowTextEdit && !allowImageEdit)
-  const btnOpenText = $('#btnOpenText')
-  if (btnOpenText) btnOpenText.disabled = hasSelection && !allowTextEdit
-  const btnOpenImage = $('#btnOpenImage')
-  if (btnOpenImage) btnOpenImage.disabled = hasSelection && !allowImageEdit
-  if (!filesState.selectedRemote && isPreview) {
-    setPreview('Select a file…', previewText(''))
-  }
-  // Update meta label.
-  const modeLabel = isPreview ? 'Preview' : (isText ? 'Text editor' : 'Image editor')
-  if (isPreview && filesState.viewerMetaText) {
-    $('#viewerMeta').textContent = filesState.viewerMetaText
-  } else {
-    $('#viewerMeta').textContent = filesState.editorPath ? `${modeLabel} — ${filesState.editorPath}` : `${modeLabel} — new file`
-  }
-  document.querySelectorAll('.preview__frame').forEach((el) => {
-    el.classList.toggle('preview__frame--full', filesState.viewerFullscreen)
-  })
-}
-
 // Move up one directory level when possible.
 async function remoteUp() {
   // Normalize current path removing trailing slashes.
@@ -524,19 +305,6 @@ async function remoteSaveText(pathRel, text) {
   return true
 }
 
-// Create or overwrite an image file using base64 payload.
-async function remoteSaveImage(pathRel, base64Data) {
-  // Send base64 content with proper encoding flag.
-  const res = await fetch(`${API_BASE}/files/write`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, content: base64Data, encoding: 'base64' }) })
-  // Parse JSON body.
-  const j = await res.json().catch(() => ({}))
-  // Notify on failures.
-  if (!res.ok || !j.ok) { setStatus(j.error || `Save failed: ${res.status}`, false); return false }
-  // Success feedback to status bar.
-  setStatus('Saved ✔', true)
-  return true
-}
-
 // Rename a remote file by supplying new path.
 async function remoteRename(pathRel, newName) {
   // Compute new relative path in current directory.
@@ -556,29 +324,29 @@ async function remoteRename(pathRel, newName) {
 // Move a remote file to an arbitrary path.
 async function remoteMove(pathRel) {
   const dest = prompt('Move to path (relative to root):', pathRel)
-  if (!dest || dest === pathRel) return
+  if (!dest || dest === pathRel) return null
   const res = await fetch(`${API_BASE}/files/rename`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, newPath: dest }) })
   const j = await res.json().catch(() => ({}))
-  if (!res.ok || !j.ok) { setStatus(j.error || `Move failed: ${res.status}`, false); return false }
+  if (!res.ok || !j.ok) { setStatus(j.error || `Move failed: ${res.status}`, false); return null }
   filesState.selectedRemote = dest
   await remoteList(filesState.remotePath)
-  await remotePreview(dest)
-  return true
+  return dest
 }
 
 // Delete a remote file using server endpoint.
-async function remoteDelete(pathRel) {
+async function remoteDelete(pathRel, confirmDelete = true) {
   // Prompt user for confirmation.
-  if (!confirm(`Delete remote file "${pathRel}"?`)) return
+  if (confirmDelete && !confirm(`Delete remote file "${pathRel}"?`)) return false
   // Send delete request.
   const res = await fetch(`${API_BASE}/files/delete`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel }) })
   // Parse JSON reply.
   const j = await res.json().catch(() => ({}))
   // Notify on errors.
-  if (!res.ok || !j.ok) { setStatus(j.error || `Delete failed: ${res.status}`, false); return }
+  if (!res.ok || !j.ok) { setStatus(j.error || `Delete failed: ${res.status}`, false); return false }
   // Clear selection and refresh listing.
   filesState.selectedRemote = null
   await remoteList(filesState.remotePath)
+  return true
 }
 
 // Update status text with optional success flag.
@@ -707,6 +475,18 @@ function buildWaypointPayload({ id, name, description, position, icon, existing 
 function getItemsForTab() {
   // Capture active tab key.
   const tab = state.tab
+  if (tab === 'files') {
+    return (filesState.remoteEntries || []).map((e) => ({
+      type: 'files',
+      id: buildRelPath(e.name),
+      name: e.name,
+      description: e.type === 'dir' ? 'Directory' : '',
+      fileType: e.type,
+      size: e.size,
+      modified: e.mtime,
+      raw: e
+    }))
+  }
   // Find resource map for that tab.
   const r = state.resources[tab] || {}
   // Convert entries into normalized items.
@@ -718,9 +498,9 @@ function applyFilters(list) {
   // Acquire search string.
   const q = ($('#filterText').value || '').trim().toLowerCase()
   // Parse numeric filter for distance.
-  const within = parseFloat($('#filterWithinNm').value || '')
+  const within = state.tab === 'files' ? NaN : parseFloat($('#filterWithinNm').value || '')
   // Icon filter selection.
-  const icon = ($('#filterIcon').value || '').trim()
+  const icon = state.tab === 'files' ? '' : ($('#filterIcon').value || '').trim()
 
   // Filter list based on conditions.
   return list.filter(it => {
@@ -746,6 +526,11 @@ function applySort(list) {
   const dir = order === 'asc' ? 1 : -1
   // Selector for values based on key.
   const getv = (it) => {
+    if (state.tab === 'files') {
+      if (key === 'size') return it.size ?? 0
+      if (key === 'updated') return it.modified ? new Date(it.modified).getTime() : 0
+      return (it.name || '').toLowerCase()
+    }
     if (key === 'name') return (it.name || '').toLowerCase()
     if (key === 'distance') return it.distanceNm ?? Number.POSITIVE_INFINITY
     if (key === 'bearing') return it.bearing ?? Number.POSITIVE_INFINITY
@@ -762,6 +547,18 @@ function paginate(list, page, size) {
   const current = Math.min(Math.max(page, 1), totalPages)
   const start = (current - 1) * size
   return { page: current, totalPages, items: list.slice(start, start + size) }
+}
+
+// Calculate a dynamic page size from the visible table height.
+function computePageSize(tab) {
+  const wrap = $('#tableWrap')
+  if (!wrap) return state.pageSize[tab] || 8
+  const head = wrap.querySelector('thead')
+  const headerH = head ? head.offsetHeight : 0
+  const available = Math.max(0, wrap.clientHeight - headerH - 12)
+  const rowH = 52
+  const calc = Math.max(1, Math.floor(available / rowH))
+  return calc || state.pageSize[tab] || 8
 }
 
 // Render an icon cell using loaded manifest.
@@ -816,6 +613,15 @@ function renderActions(it) {
     wrap.appendChild(btnTiny('map', 'Show on map', () => showOnMap(it)))
     wrap.appendChild(btnTiny('edit', 'Edit', () => editWaypoint(it)))
     wrap.appendChild(btnTiny('trash', 'Delete', () => deleteResource(it)))
+  } else if (it.type === 'files') {
+    if (it.fileType === 'file') {
+      wrap.appendChild(btnTiny('download', 'Download', (ev) => {
+        ev.stopPropagation()
+        window.open(`${API_BASE}/files/download?path=${encodeURIComponent(it.id)}`, '_blank')
+      }))
+    }
+    wrap.appendChild(btnTiny('edit', 'View', () => openDetail(it)))
+    wrap.appendChild(btnTiny('trash', 'Delete', () => deleteResource(it)))
   } else {
     wrap.appendChild(btnTiny('trash', 'Delete', () => deleteResource(it)))
   }
@@ -827,53 +633,379 @@ function escapeHtml(s) {
   return (s || '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]))
 }
 
+// Clear detail panel and TinyMCE instance.
+function closeDetail() {
+  const panel = $('#detailPanel')
+  if (panel) panel.classList.add('hidden')
+  if (filesState.tinyEditor?.remove) filesState.tinyEditor.remove()
+  filesState.tinyEditor = null
+  state.detail = { item: null, preview: null, edit: false, isNew: false }
+}
+
+// Render a property row for the detail table.
+function propRow(label, valueNode) {
+  const tr = document.createElement('tr')
+  const th = document.createElement('th')
+  th.textContent = label
+  const td = document.createElement('td')
+  td.appendChild(valueNode)
+  tr.appendChild(th); tr.appendChild(td)
+  return tr
+}
+
+// Build a select element for icons.
+function buildIconSelect(selected = '') {
+  const sel = document.createElement('select')
+  sel.id = 'detailEditIcon'
+  const blank = document.createElement('option')
+  blank.value = ''
+  blank.textContent = '— choose —'
+  sel.appendChild(blank)
+  for (const ic of state.icons?.icons || []) {
+    const o = document.createElement('option')
+    o.value = ic.id
+    o.textContent = ic.label
+    if (ic.id === selected) o.selected = true
+    sel.appendChild(o)
+  }
+  return sel
+}
+
+// Render the waypoint detail view.
+function renderWaypointDetail(it, editMode) {
+  const table = document.createElement('table')
+  table.className = 'proptable'
+  const raw = state.resources.waypoints?.[it.id] || it.raw || {}
+
+  const nameField = editMode ? (() => {
+    const inp = document.createElement('input')
+    inp.type = 'text'
+    inp.id = 'detailEditName'
+    inp.value = raw.name || ''
+    return inp
+  })() : document.createTextNode(raw.name || it.name || '')
+
+  const descField = editMode ? (() => {
+    const ta = document.createElement('textarea')
+    ta.id = 'detailEditDesc'
+    ta.rows = 3
+    ta.value = raw.description || it.description || ''
+    return ta
+  })() : document.createTextNode(raw.description || it.description || '')
+
+  const latField = editMode ? (() => {
+    const inp = document.createElement('input')
+    inp.type = 'number'
+    inp.step = '0.000001'
+    inp.id = 'detailEditLat'
+    inp.value = raw.position?.latitude ?? it.position?.latitude ?? ''
+    return inp
+  })() : document.createTextNode((raw.position?.latitude ?? it.position?.latitude ?? '—').toString())
+
+  const lonField = editMode ? (() => {
+    const inp = document.createElement('input')
+    inp.type = 'number'
+    inp.step = '0.000001'
+    inp.id = 'detailEditLon'
+    inp.value = raw.position?.longitude ?? it.position?.longitude ?? ''
+    return inp
+  })() : document.createTextNode((raw.position?.longitude ?? it.position?.longitude ?? '—').toString())
+
+  const iconField = editMode ? buildIconSelect(it.icon || raw.properties?.icon || '') : document.createTextNode(it.icon || raw.properties?.icon || '—')
+
+  table.appendChild(propRow('Name', nameField))
+  table.appendChild(propRow('Description', descField))
+  table.appendChild(propRow('Latitude', latField))
+  table.appendChild(propRow('Longitude', lonField))
+  table.appendChild(propRow('Icon', iconField))
+  table.appendChild(propRow('ID', document.createTextNode(it.id)))
+  return table
+}
+
+// Render the route detail view (read-only summary).
+function renderRouteDetail(it) {
+  const table = document.createElement('table')
+  table.className = 'proptable'
+  table.appendChild(propRow('Name', document.createTextNode(it.name || it.id)))
+  table.appendChild(propRow('Description', document.createTextNode(it.description || '—')))
+  table.appendChild(propRow('Updated', document.createTextNode(it.updated ? new Date(it.updated).toLocaleString() : '—')))
+  table.appendChild(propRow('ID', document.createTextNode(it.id)))
+  return table
+}
+
+// Render the file detail view, including previews/editors.
+async function renderFileDetail(it, preview, editMode, isNew) {
+  const frag = document.createDocumentFragment()
+  const table = document.createElement('table')
+  table.className = 'proptable'
+  table.appendChild(propRow('Path', document.createTextNode(it.id)))
+  table.appendChild(propRow('Type', document.createTextNode(it.fileType)))
+  if (preview?.mime) table.appendChild(propRow('MIME', document.createTextNode(preview.mime)))
+  if (it.fileType === 'file' && it.size != null) table.appendChild(propRow('Size', document.createTextNode(humanSize(it.size))))
+  if (it.modified) table.appendChild(propRow('Modified', document.createTextNode(new Date(it.modified).toLocaleString())))
+  frag.appendChild(table)
+
+  const pathField = document.createElement('input')
+  pathField.type = 'text'
+  pathField.id = 'detailFilePath'
+  pathField.value = it.id
+  pathField.className = 'textfield'
+  const saveTable = document.createElement('table')
+  saveTable.className = 'proptable'
+  saveTable.appendChild(propRow('Save as', pathField))
+  frag.appendChild(saveTable)
+
+  if (preview?.error) {
+    const p = document.createElement('p')
+    p.className = 'muted'
+    p.textContent = preview.error
+    frag.appendChild(p)
+    return { node: frag, saveable: false }
+  }
+
+  if (it.fileType === 'dir') {
+    const p = document.createElement('p')
+    p.textContent = 'Open the directory from the list to browse entries.'
+    frag.appendChild(p)
+    return { node: frag, saveable: false }
+  }
+
+  if (preview?.kind === 'text' || editMode || isNew) {
+    const host = document.createElement('div')
+    host.className = 'editorhost'
+    const ta = document.createElement('textarea')
+    ta.id = 'detailTextEditor'
+    ta.className = 'editor__text'
+    host.appendChild(ta)
+    frag.appendChild(host)
+    await setTextEditorValue(preview?.text || '', '#detailTextEditor')
+    return { node: frag, saveable: true }
+  }
+
+  if (preview?.kind === 'binary' && preview.data && isPreviewableMime(preview.mime)) {
+    frag.appendChild(previewBinary(preview.mime, preview.data))
+    return { node: frag, saveable: false }
+  }
+
+  const fallback = document.createElement('p')
+  fallback.textContent = 'Binary file — download to edit.'
+  frag.appendChild(fallback)
+  return { node: frag, saveable: false }
+}
+
+// Render the detail overlay with content specific to the selected item.
+async function renderDetail() {
+  const panel = $('#detailPanel')
+  if (!panel) return
+  const saveBtn = $('#btnSaveDetail')
+  if (!state.detail.item) { panel.classList.add('hidden'); return }
+  panel.classList.remove('hidden')
+  panel.classList.add('detail--open')
+  const { item, preview, edit, isNew } = state.detail
+  $('#detailTitle').textContent = `${item.type.slice(0, -1).toUpperCase()}: ${item.name}`
+  $('#detailMeta').textContent = item.type === 'files' ? (preview?.meta || renderCrumbs()) : `ID: ${item.id}`
+  const actions = $('#detailActions')
+  const body = $('#detailBody')
+  actions.innerHTML = ''
+  body.innerHTML = ''
+  let saveable = false
+  saveBtn.classList.add('hidden')
+
+  if (item.type === 'waypoints') {
+    actions.appendChild(btnTiny('goto', 'Go to', () => gotoWaypoint(item)))
+    actions.appendChild(btnTiny('map', 'Show on map', () => showOnMap(item)))
+    const toggleEdit = btnTiny(edit ? 'close' : 'edit', 'Edit', async () => { state.detail.edit = !state.detail.edit; await renderDetail() })
+    actions.appendChild(toggleEdit)
+    actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
+    body.appendChild(renderWaypointDetail(item, edit))
+    saveable = edit
+  } else if (item.type === 'routes') {
+    actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
+    body.appendChild(renderRouteDetail(item))
+  } else if (item.type === 'files') {
+    if (item.fileType === 'file') {
+      actions.appendChild(btnTiny('download', 'Download', () => window.open(`${API_BASE}/files/download?path=${encodeURIComponent(item.id)}`, '_blank')))
+      actions.appendChild(btnTiny('edit', 'Rename', async () => {
+        const base = item.id.split('/').pop()
+        const next = prompt('New name:', base)
+        if (next) {
+          const ok = await remoteRename(item.id, next)
+          if (ok) {
+            await remoteList(filesState.remotePath)
+            await openDetail({ ...item, id: buildRelPath(next), name: next, fileType: 'file' })
+          }
+        }
+      }))
+      actions.appendChild(btnTiny('arrow-right', 'Move', async () => {
+        const dest = await remoteMove(item.id)
+        if (dest) await openDetail({ ...item, id: dest, name: dest.split('/').pop(), fileType: 'file' })
+      }))
+    }
+    actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
+    const fileDetail = await renderFileDetail(item, preview, edit, isNew)
+    saveable = fileDetail.saveable
+    body.appendChild(fileDetail.node)
+  }
+
+  if (saveable) saveBtn.classList.remove('hidden')
+}
+
+// Open the detail overlay for a given item.
+async function openDetail(it, opts = {}) {
+  filesState.tinyEditor?.remove?.()
+  filesState.tinyEditor = null
+  state.detail = { item: it, preview: null, edit: !!opts.edit, isNew: !!opts.isNew }
+  try {
+    if (it.type === 'files') {
+      filesState.selectedRemote = it.id
+      if (opts.isNew) {
+        state.detail.preview = { kind: 'text', text: '' }
+        state.detail.edit = true
+      } else if (it.fileType === 'file') {
+        state.detail.preview = await remotePreview(it.id)
+        if (state.detail.preview?.kind === 'text') state.detail.edit = true
+      } else {
+        state.detail.preview = { kind: 'dir' }
+      }
+    } else if (it.type === 'waypoints') {
+      state.detail.preview = { raw: state.resources.waypoints?.[it.id] || it.raw }
+    } else if (it.type === 'routes') {
+      state.detail.preview = { raw: state.resources.routes?.[it.id] || it.raw }
+    }
+  } catch (e) {
+    state.detail.preview = { ok: false, error: e.message || String(e) }
+  }
+  await renderDetail()
+}
+
+// Persist edits performed in the detail overlay.
+async function saveDetail() {
+  const { item } = state.detail
+  if (!item) return
+  if (item.type === 'waypoints') {
+    const name = $('#detailEditName')?.value?.trim()
+    const description = $('#detailEditDesc')?.value?.trim()
+    const lat = parseFloat($('#detailEditLat')?.value)
+    const lon = parseFloat($('#detailEditLon')?.value)
+    const icon = $('#detailEditIcon')?.value?.trim()
+    if (!name || Number.isNaN(lat) || Number.isNaN(lon)) { setStatus('Missing name/position', false); return }
+    const orig = state.resources.waypoints[item.id]
+    if (!orig) { setStatus('Waypoint not found in cache', false); return }
+    const updated = buildWaypointPayload({
+      id: item.id,
+      name,
+      description,
+      position: { latitude: lat, longitude: lon },
+      icon,
+      existing: orig
+    })
+    try {
+      setStatus('Saving…')
+      const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(item.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      })
+      if (!res.ok) throw new Error(`Save failed: ${res.status}`)
+      await refresh()
+      state.detail.edit = false
+      await openDetail(normalizeResource('waypoints', item.id, updated))
+      setStatus('Saved ✔', true)
+    } catch (e) { setStatus(e.message || String(e), false) }
+    return
+  }
+
+  if (item.type === 'files') {
+    const path = $('#detailFilePath')?.value?.trim() || item.id
+    const ok = await remoteSaveText(path, getTextEditorValue('#detailTextEditor'))
+    if (ok) {
+      await remoteList(filesState.remotePath)
+      await openDetail({ ...item, id: path, name: path.split('/').pop(), fileType: 'file' }, { edit: true })
+    }
+  }
+}
+
+// Render table header cells depending on the active tab.
+function renderTableHead() {
+  const headRow = $('#tableHeadRow')
+  if (!headRow) return
+  const isFiles = state.tab === 'files'
+  headRow.innerHTML = ''
+  if (isFiles) {
+    headRow.innerHTML = `
+      <th style="width:40px"><input type="checkbox" id="selectAllHeader" /></th>
+      <th>Type</th>
+      <th>Name</th>
+      <th class="num" style="text-align:right">Size</th>
+      <th class="num" style="text-align:right">Modified</th>
+      <th>Actions</th>`
+  } else {
+    headRow.innerHTML = `
+      <th style="width:40px"><input type="checkbox" id="selectAllHeader" /></th>
+      <th>Icon</th>
+      <th>Name</th>
+      <th class="num" style="text-align:right">Dist (NM)</th>
+      <th class="num" style="text-align:right">Brg (°)</th>
+      <th>Actions</th>`
+  }
+  headRow.querySelector('#selectAllHeader')?.addEventListener('change', (e) => setSelectAll(e.target.checked))
+}
+
 // Render the current tab contents into the DOM.
 function render() {
   // Determine if files tab is active.
   const isFiles = state.tab === 'files'
-  // Toggle visibility of files view and tables.
-  setHidden($('#filesView'), !isFiles)
-  setHidden($('#tableWrap'), isFiles)
-  setHidden($('#filtersPanel'), isFiles)
-  setHidden($('#contentToolbar'), isFiles)
-  setHidden($('#contentActions'), isFiles)
-  $('#listPager').classList.toggle('hidden', isFiles)
-  // Special case rendering for files tab.
-  if (isFiles) {
-    $('#listTitle').textContent = 'Files'
-    $('#listMeta').textContent = ''
-    renderFiles()
-    return
-  }
-
   // Update header text for active tab.
   $('#listTitle').textContent = state.tab[0].toUpperCase() + state.tab.slice(1)
+
+  // Toggle action bars.
+  $('#navActions')?.classList.toggle('hidden', isFiles)
+  $('#fileActions')?.classList.toggle('hidden', !isFiles)
+
+  // Toggle filter fields that are navigation-specific.
+  const withinField = $('#filterWithinNm')?.closest('.field')
+  const iconField = $('#filterIcon')?.closest('.field')
+  if (withinField) setHidden(withinField, isFiles)
+  if (iconField) setHidden(iconField, isFiles)
+
+  const disableWaypointActions = state.tab !== 'waypoints'
+  $('#btnCreateHere')?.setAttribute('aria-disabled', disableWaypointActions)
+  if ($('#btnCreateHere')) $('#btnCreateHere').disabled = disableWaypointActions
+  if ($('#btnImport')) $('#btnImport').disabled = disableWaypointActions
+  if ($('#btnExport')) $('#btnExport').disabled = disableWaypointActions
+
   // Compute items and derived metrics for waypoints.
   let list = getItemsForTab().map(it => {
     if (state.tab === 'waypoints') computeDerived(it)
     return it
   })
-  $('#btnCreateHere')?.setAttribute('aria-disabled', state.tab !== 'waypoints')
-  if ($('#btnCreateHere')) $('#btnCreateHere').disabled = state.tab !== 'waypoints'
-  if ($('#btnImport')) $('#btnImport').disabled = state.tab !== 'waypoints'
-  if ($('#btnExport')) $('#btnExport').disabled = state.tab !== 'waypoints'
-  // Apply filters.
+
+  // Apply filters and sorting.
   list = applyFilters(list)
-  // Apply sorting.
   list = applySort(list)
-  // Store list for future access.
   state.list = list
-  // Apply pagination.
-  const paged = paginate(list, state.page[state.tab], PAGE_SIZE)
+
+  // Apply pagination using viewport-aware page size.
+  const pageSize = computePageSize(state.tab)
+  state.pageSize[state.tab] = pageSize
+  const paged = paginate(list, state.page[state.tab], pageSize)
   state.page[state.tab] = paged.page
   const viewList = paged.items
+
   // Update pager controls.
   $('#pagerInfo').textContent = `${paged.page}/${paged.totalPages}`
   $('#btnPagePrev').disabled = paged.page <= 1
   $('#btnPageNext').disabled = paged.page >= paged.totalPages
 
   // Update summary meta text.
-  $('#listMeta').textContent = `${list.length} item(s) • selected: ${state.selected.size}`
+  const metaParts = []
+  if (isFiles) metaParts.push(renderCrumbs())
+  metaParts.push(`${list.length} item(s)`)
+  metaParts.push(`selected: ${state.selected.size}`)
+  metaParts.push(`page size: ${pageSize}`)
+  $('#listMeta').textContent = metaParts.join(' • ')
+
+  renderTableHead()
 
   // Locate tbody for table rows.
   const tbody = $('#tbody')
@@ -884,6 +1016,15 @@ function render() {
   // Build rows for each item.
   for (const it of viewList) {
     const tr = document.createElement('tr')
+
+    tr.addEventListener('click', (ev) => {
+      if (ev.target.closest('button') || ev.target.tagName === 'INPUT' || ev.target.tagName === 'SELECT' || ev.target.tagName === 'OPTION') return
+      if (it.type === 'files' && it.fileType === 'dir') {
+        remoteList(it.id)
+        return
+      }
+      openDetail(it)
+    })
 
     const tdSel = document.createElement('td')
     const cb = document.createElement('input')
@@ -898,32 +1039,58 @@ function render() {
     tdSel.appendChild(cb)
     tr.appendChild(tdSel)
 
-    const tdIcon = document.createElement('td')
-    tdIcon.appendChild(renderIconCell(it.icon))
-    tr.appendChild(tdIcon)
+    if (isFiles) {
+      const tdType = document.createElement('td')
+      tdType.textContent = it.fileType === 'dir' ? 'DIR' : 'FILE'
+      tdType.className = 'muted small'
+      tr.appendChild(tdType)
 
-    const tdName = document.createElement('td')
-    tdName.innerHTML = `<div><strong>${escapeHtml(it.name)}</strong></div><div class="muted small">${escapeHtml(it.description || '')}</div>`
-    tr.appendChild(tdName)
+      const tdName = document.createElement('td')
+      tdName.innerHTML = `<div><strong>${escapeHtml(it.name)}</strong></div><div class="muted small">${escapeHtml(it.description || '')}</div>`
+      tr.appendChild(tdName)
 
-    const tdDist = document.createElement('td')
-    tdDist.className = 'num'
-    tdDist.textContent = it.distanceNm == null ? '—' : fmt(it.distanceNm, 2)
-    tr.appendChild(tdDist)
+      const tdSize = document.createElement('td')
+      tdSize.className = 'num'
+      tdSize.textContent = it.fileType === 'dir' ? '—' : humanSize(it.size)
+      tr.appendChild(tdSize)
 
-    const tdBrg = document.createElement('td')
-    tdBrg.className = 'num'
-    tdBrg.textContent = it.bearing == null ? '—' : fmt(it.bearing, 0)
-    tr.appendChild(tdBrg)
+      const tdMod = document.createElement('td')
+      tdMod.className = 'num'
+      tdMod.textContent = it.modified ? new Date(it.modified).toLocaleString() : '—'
+      tr.appendChild(tdMod)
 
-    const tdAct = document.createElement('td')
-    tdAct.appendChild(renderActions(it))
-    tr.appendChild(tdAct)
+      const tdAct = document.createElement('td')
+      tdAct.appendChild(renderActions(it))
+      tr.appendChild(tdAct)
+    } else {
+      const tdIcon = document.createElement('td')
+      tdIcon.appendChild(renderIconCell(it.icon))
+      tr.appendChild(tdIcon)
+
+      const tdName = document.createElement('td')
+      tdName.innerHTML = `<div><strong>${escapeHtml(it.name)}</strong></div><div class="muted small">${escapeHtml(it.description || '')}</div>`
+      tr.appendChild(tdName)
+
+      const tdDist = document.createElement('td')
+      tdDist.className = 'num'
+      tdDist.textContent = it.distanceNm == null ? '—' : fmt(it.distanceNm, 2)
+      tr.appendChild(tdDist)
+
+      const tdBrg = document.createElement('td')
+      tdBrg.className = 'num'
+      tdBrg.textContent = it.bearing == null ? '—' : fmt(it.bearing, 0)
+      tr.appendChild(tdBrg)
+
+      const tdAct = document.createElement('td')
+      tdAct.appendChild(renderActions(it))
+      tr.appendChild(tdAct)
+
+      // Cache references for incremental metric updates.
+      state.rows.set(`${it.type}:${it.id}`, { row: tr, distCell: tdDist, brgCell: tdBrg })
+    }
 
     // Append row into table.
     tbody.appendChild(tr)
-    // Cache references for incremental metric updates.
-    state.rows.set(`${it.type}:${it.id}`, { row: tr, distCell: tdDist, brgCell: tdBrg })
   }
 }
 
@@ -1019,6 +1186,11 @@ async function deleteResource(it) {
   try {
     if (!confirm(`Delete ${it.type.slice(0,-1)} "${it.name}"?`)) return
     setStatus('Deleting…')
+    if (it.type === 'files') {
+      const ok = await remoteDelete(it.id, false)
+      if (ok) { closeDetail(); setStatus('Deleted ✔', true) }
+      return
+    }
     const res = await fetch(`${RES_ENDPOINT(it.type)}/${encodeURIComponent(it.id)}`, { method: 'DELETE' })
     if (!res.ok) throw new Error(`Delete failed: ${res.status}`)
     state.selected.delete(`${it.type}:${it.id}`)
@@ -1032,6 +1204,17 @@ async function bulkDelete() {
   const keys = [...state.selected].filter(k => k.startsWith(state.tab + ':'))
   if (!keys.length) return
   if (!confirm(`Delete ${keys.length} selected ${state.tab}?`)) return
+  if (state.tab === 'files') {
+    const itemMap = new Map(getItemsForTab().map(it => [it.id, it]))
+    for (const k of keys) {
+      const id = k.split(':')[1]
+      const it = itemMap.get(id)
+      if (it) await deleteResource(it)
+    }
+    state.selected.clear()
+    await remoteList(filesState.remotePath)
+    return
+  }
   for (const k of keys) {
     const id = k.split(':')[1]
     const it = normalizeResource(state.tab, id, state.resources[state.tab][id])
@@ -1123,7 +1306,9 @@ function setTab(tab) {
   state.tab = tab
   state.selected.clear()
   state.page[tab] = 1
+  closeDetail()
   document.querySelectorAll('.segmented__btn').forEach(b => b.classList.toggle('segmented__btn--active', b.dataset.tab === tab))
+  if (tab === 'files' && !filesState.remoteEntries.length) remoteList(filesState.remotePath)
   render()
 }
 
@@ -1149,102 +1334,10 @@ function updateWaypointMetrics() {
   }
 }
 
-// Open text editor for existing or new files.
-async function openTextEditor(existingPath) {
-  if (existingPath && preferredEditorForMime(filesState.previewMime) !== 'text') {
-    setStatus('Text editor available for text-based files only', false)
-    return
-  }
-  filesState.viewerMode = 'text'
-  filesState.editorPath = existingPath || buildRelPath('new-file.txt')
-  filesState.viewerFullscreen = false
-  filesState.selectedRemote = existingPath || filesState.selectedRemote
-  let text = ''
-  if (existingPath) {
-    const res = await fetch(`${API_BASE}/files/read?path=${encodeURIComponent(existingPath)}`)
-    const j = await res.json()
-    if (res.ok && j.ok && j.kind === 'text') text = j.text || ''
-  }
-  await setTextEditorValue(text)
-  renderFiles()
-}
-
-// Open image editor with a selected image file or current preview.
-async function openImageEditor(existingPath) {
-  if (existingPath && preferredEditorForMime(filesState.previewMime) !== 'image') {
-    setStatus('Image editor available for image files only', false)
-    return
-  }
-  filesState.viewerMode = 'image'
-  filesState.editorPath = existingPath || buildRelPath('new-image.png')
-  filesState.viewerFullscreen = false
-  filesState.editorImageData = null
-  filesState.selectedRemote = existingPath || filesState.selectedRemote
-  let painter
-  try {
-    painter = ensurePainter()
-  } catch (e) {
-    setStatus(e.message || String(e), false)
-    return
-  }
-  let mime = 'image/png'
-  if (existingPath) {
-    const res = await fetch(`${API_BASE}/files/read?path=${encodeURIComponent(existingPath)}`)
-    const j = await res.json()
-    if (res.ok && j.ok && j.kind === 'binary' && j.data) {
-      filesState.editorImageData = j.data
-      mime = j.mime || mime
-      painter.show(`data:${mime};base64,${j.data}`)
-    } else {
-      painter.show()
-    }
-  } else {
-    painter.show()
-  }
-  renderFiles()
-}
-
-// Persist current editor buffer to the server.
-async function saveEditor() {
-  if (!filesState.viewerMode || filesState.viewerMode === 'preview') return
-  if (filesState.viewerMode === 'text') {
-    const ok = await remoteSaveText(filesState.editorPath, getTextEditorValue())
-    if (ok) await remoteList(filesState.remotePath)
-  } else if (filesState.viewerMode === 'image') {
-    try { filesState.painter?.save() } catch {}
-    if (!filesState.editorImageData) { setStatus('Pick an image to save', false); return }
-    const ok = await remoteSaveImage(filesState.editorPath, filesState.editorImageData)
-    if (ok) await remoteList(filesState.remotePath)
-  }
-}
-
-// Toggle fullscreen state for combined viewer.
-function toggleViewerFullscreen() {
-  filesState.viewerFullscreen = true
-  renderFiles()
-}
-
-// Exit fullscreen viewer mode.
-function exitViewerFullscreen() {
-  filesState.viewerFullscreen = false
-  renderFiles()
-}
-
-// Close any open editor and return to preview mode.
-function closeEditors() {
-  filesState.viewerMode = 'preview'
-  filesState.editorPath = ''
-  filesState.selectedRemote = null
-  filesState.viewerMetaText = 'Select a file…'
-  filesState.previewMime = ''
-  setPreview('Select a file…', previewText(''))
-  renderFiles()
-}
-
 // Wire up DOM event handlers after load.
 function wire() {
   document.querySelectorAll('.segmented__btn').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)))
-  $('#btnRefresh').addEventListener('click', refresh)
+  $('#btnRefresh').addEventListener('click', () => { state.selected.clear(); refresh(); if (state.tab === 'files') remoteList(filesState.remotePath) })
   $('#btnPagePrev').addEventListener('click', () => { state.page[state.tab] = Math.max(1, (state.page[state.tab] || 1) - 1); render() })
   $('#btnPageNext').addEventListener('click', () => { state.page[state.tab] = (state.page[state.tab] || 1) + 1; render() })
   ;['filterText','filterWithinNm','filterIcon','sortBy','sortOrder'].forEach(id => {
@@ -1252,7 +1345,6 @@ function wire() {
     $(`#${id}`).addEventListener('change', () => { state.page[state.tab] = 1; render() })
   })
   $('#selectAll').addEventListener('change', (e) => setSelectAll(e.target.checked))
-  $('#selectAllHeader').addEventListener('change', (e) => setSelectAll(e.target.checked))
   $('#btnBulkDelete').addEventListener('click', bulkDelete)
   $('#btnCreateHere').addEventListener('click', createAtVesselPosition)
 
@@ -1263,42 +1355,14 @@ function wire() {
   $('#btnRemoteRefresh')?.addEventListener('click', () => remoteList(filesState.remotePath))
   $('#btnRemoteMkdir')?.addEventListener('click', remoteMkdir)
   $('#remoteUpload')?.addEventListener('change', (e) => remoteUpload(e.target.files))
-  $('#btnFilesPrev')?.addEventListener('click', () => { state.page.files = Math.max(1, (state.page.files || 1) - 1); renderFiles() })
-  $('#btnFilesNext')?.addEventListener('click', () => { state.page.files = (state.page.files || 1) + 1; renderFiles() })
-  $('#btnOpenTextNew')?.addEventListener('click', () => openTextEditor())
-  $('#btnOpenImageNew')?.addEventListener('click', () => openImageEditor())
-  $('#btnEditSelected')?.addEventListener('click', () => {
-    if (!filesState.selectedRemote) { setStatus('Select a remote file to edit', false); return }
-    const pref = preferredEditorForMime(filesState.previewMime)
-    if (pref === 'image') openImageEditor(filesState.selectedRemote)
-    else if (pref === 'text') openTextEditor(filesState.selectedRemote)
-    else setStatus('Editing available for text or image files only', false)
-  })
-  $('#btnMoveSelected')?.addEventListener('click', () => {
-    if (!filesState.selectedRemote) { setStatus('Select a file first', false); return }
-    remoteMove(filesState.selectedRemote)
-  })
-  $('#btnRenameSelected')?.addEventListener('click', async () => {
-    if (!filesState.selectedRemote) { setStatus('Select a file first', false); return }
-    const base = filesState.selectedRemote.split('/').pop()
-    const name = prompt('New name:', base)
-    if (!name) return
-    await remoteRename(filesState.selectedRemote, name)
-  })
-  $('#btnDeleteSelected')?.addEventListener('click', () => {
-    if (!filesState.selectedRemote) { setStatus('Select a file first', false); return }
-    remoteDelete(filesState.selectedRemote)
-  })
-  $('#btnViewerFullscreen')?.addEventListener('click', toggleViewerFullscreen)
-  $('#btnExitViewport')?.addEventListener('click', exitViewerFullscreen)
-  $('#btnOpenText')?.addEventListener('click', () => openTextEditor(filesState.selectedRemote || ''))
-  $('#btnOpenImage')?.addEventListener('click', () => openImageEditor(filesState.selectedRemote || ''))
-  $('#btnCloseEditor')?.addEventListener('click', closeEditors)
-  $('#btnSaveEditor')?.addEventListener('click', saveEditor)
+  $('#btnOpenTextNew')?.addEventListener('click', () => openDetail({ type: 'files', id: buildRelPath('new-file.txt'), name: 'new-file.txt', fileType: 'file', size: 0, modified: null, description: '', raw: { name: 'new-file.txt', type: 'file' } }, { edit: true, isNew: true }))
+  $('#btnCloseDetail')?.addEventListener('click', closeDetail)
+  $('#btnSaveDetail')?.addEventListener('click', saveDetail)
 
   $('#doExport').addEventListener('click', (e) => { e.preventDefault(); doExport(); $('#dlgExport').close() })
   $('#doImport').addEventListener('click', (e) => { e.preventDefault(); doImport(); $('#dlgImport').close() })
   $('#doSave').addEventListener('click', (e) => { e.preventDefault(); saveWaypoint(); $('#dlgEdit').close() })
+  window.addEventListener('resize', () => render())
 }
 
 // Update metrics from websocket feed without rebuilding rows.
