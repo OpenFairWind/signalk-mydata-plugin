@@ -65,6 +65,21 @@
       "id": "save",
       "label": "Save",
       "path": "save.svg"
+    },
+    {
+      "id": "arrow-up",
+      "label": "Up",
+      "path": "arrow-up.svg"
+    },
+    {
+      "id": "add",
+      "label": "Add",
+      "path": "add.svg"
+    },
+    {
+      "id": "folder",
+      "label": "Folder",
+      "path": "folder.svg"
     }
   ]
 }
