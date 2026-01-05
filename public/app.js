@@ -1,6 +1,9 @@
 import { haversineNm, bearingDeg, fmt, downloadText, parseCSV, toCSV, parseGPX, toGPX, parseKML, toKML, parseGeoJSON, toGeoJSON } from './formats.js'
 const $ = (sel) => document.querySelector(sel)
 
+const PLUGIN_ID = 'signalk-mydata-plugin'
+const API_BASE = `/plugins/${PLUGIN_ID}`
+
 const state = {
   tab: 'waypoints',
   resources: { waypoints: {}, routes: {}, tracks: {} },
@@ -10,6 +13,188 @@ const state = {
   icons: null
 }
 const RES_ENDPOINT = (type) => `/signalk/v2/api/resources/${type}`
+
+const filesState = {
+  remotePath: '',
+  remoteEntries: [],
+  localFiles: [],
+  selectedRemote: null
+}
+
+function humanSize(bytes) {
+  if (bytes == null) return ''
+  const units = ['B','KB','MB','GB']
+  let b = Number(bytes)
+  let u = 0
+  while (b >= 1024 && u < units.length-1) { b /= 1024; u++ }
+  return `${b.toFixed(u===0?0:1)} ${units[u]}`
+}
+
+function setHidden(el, hidden) {
+  if (!el) return
+  el.classList.toggle('hidden', hidden)
+}
+
+async function remoteList(pathRel='') {
+  const res = await fetch(`${API_BASE}/files/list?path=${encodeURIComponent(pathRel)}`)
+  const j = await res.json()
+  if (!res.ok || !j.ok) throw new Error(j.error || `List failed: ${res.status}`)
+  filesState.remotePath = j.path || ''
+  filesState.remoteEntries = j.entries || []
+  filesState.selectedRemote = null
+  renderFiles()
+}
+
+function renderCrumbs() {
+  const el = $('#remoteCrumbs')
+  const p = filesState.remotePath || ''
+  el.textContent = p ? `/ ${p}` : '/ (root)'
+}
+
+function renderRemoteList() {
+  const host = $('#remoteList')
+  host.innerHTML = ''
+  for (const e of filesState.remoteEntries) {
+    const row = document.createElement('div')
+    row.className = 'fileitem'
+    const left = document.createElement('div')
+    left.className = 'fileitem__left'
+    const badge = document.createElement('span')
+    badge.className = 'muted'
+    badge.textContent = e.type === 'dir' ? 'DIR' : 'FILE'
+    const name = document.createElement('div')
+    name.className = 'fileitem__name'
+    name.textContent = e.name
+    left.appendChild(badge); left.appendChild(name)
+
+    const meta = document.createElement('div')
+    meta.className = 'fileitem__meta'
+    meta.textContent = e.type === 'dir' ? '' : humanSize(e.size)
+
+    const acts = document.createElement('div')
+    acts.className = 'fileitem__actions'
+    if (e.type === 'file') {
+      const dl = document.createElement('button')
+      dl.className = 'btn btn--tiny'
+      dl.type = 'button'
+      dl.textContent = 'Download'
+      dl.addEventListener('click', (ev) => {
+        ev.stopPropagation()
+        const rel = (filesState.remotePath ? (filesState.remotePath.replace(/\/+$/,'') + '/') : '') + e.name
+        window.open(`${API_BASE}/files/download?path=${encodeURIComponent(rel)}`, '_blank')
+      })
+      acts.appendChild(dl)
+    }
+
+    row.appendChild(left)
+    row.appendChild(meta)
+    row.appendChild(acts)
+
+    row.addEventListener('click', async () => {
+      if (e.type === 'dir') {
+        const next = (filesState.remotePath ? (filesState.remotePath.replace(/\/+$/,'') + '/') : '') + e.name
+        await remoteList(next)
+        return
+      }
+      const rel = (filesState.remotePath ? (filesState.remotePath.replace(/\/+$/,'') + '/') : '') + e.name
+      await remotePreview(rel)
+    })
+
+    host.appendChild(row)
+  }
+}
+
+async function remotePreview(relPath) {
+  try {
+    const res = await fetch(`${API_BASE}/files/read?path=${encodeURIComponent(relPath)}`)
+    const j = await res.json()
+    if (!res.ok || !j.ok) throw new Error(j.error || `Read failed: ${res.status}`)
+    filesState.selectedRemote = relPath
+    $('#previewMeta').textContent = `${relPath} • ${j.kind} • ${humanSize(j.size)}`
+    if (j.kind === 'text') $('#previewText').textContent = j.text || ''
+    else $('#previewText').textContent = '(binary file — use Download)'
+  } catch (e) {
+    $('#previewMeta').textContent = 'Preview error'
+    $('#previewText').textContent = e.message || String(e)
+  }
+}
+
+function renderLocalList() {
+  const host = $('#localList')
+  host.innerHTML = ''
+  for (const f of filesState.localFiles) {
+    const row = document.createElement('div')
+    row.className = 'fileitem'
+    const left = document.createElement('div')
+    left.className = 'fileitem__left'
+    const badge = document.createElement('span')
+    badge.className = 'muted'
+    badge.textContent = 'LOCAL'
+    const name = document.createElement('div')
+    name.className = 'fileitem__name'
+    name.textContent = f.name
+    left.appendChild(badge); left.appendChild(name)
+
+    const meta = document.createElement('div')
+    meta.className = 'fileitem__meta'
+    meta.textContent = humanSize(f.size)
+
+    const acts = document.createElement('div')
+    acts.className = 'fileitem__actions'
+    const open = document.createElement('button')
+    open.className = 'btn btn--tiny'
+    open.type = 'button'
+    open.textContent = 'Preview'
+    open.addEventListener('click', async (ev) => {
+      ev.stopPropagation()
+      const text = await f.text().catch(() => null)
+      $('#previewMeta').textContent = `${f.name} • local • ${humanSize(f.size)}`
+      $('#previewText').textContent = text ?? '(binary file)'
+    })
+    acts.appendChild(open)
+
+    row.appendChild(left); row.appendChild(meta); row.appendChild(acts)
+    host.appendChild(row)
+  }
+}
+
+function renderFiles() {
+  renderCrumbs()
+  renderRemoteList()
+  renderLocalList()
+}
+
+async function remoteUp() {
+  const p = (filesState.remotePath || '').replace(/\/+$/,'')
+  if (!p) return
+  const parts = p.split('/').filter(Boolean)
+  parts.pop()
+  await remoteList(parts.join('/'))
+}
+
+async function remoteMkdir() {
+  const name = prompt('New folder name:')
+  if (!name) return
+  const pfx = (filesState.remotePath ? filesState.remotePath.replace(/\/+$/,'') + '/' : '')
+  const rel = pfx + name
+  const res = await fetch(`${API_BASE}/files/mkdir`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: rel }) })
+  const j = await res.json().catch(() => ({}))
+  if (!res.ok || !j.ok) { setStatus(j.error || `mkdir failed: ${res.status}`, false); return }
+  await remoteList(filesState.remotePath)
+}
+
+async function remoteUpload(files) {
+  if (!files || !files.length) return
+  const fd = new FormData()
+  fd.append('dir', filesState.remotePath || '')
+  for (const f of files) fd.append('file', f, f.name)
+  const res = await fetch(`${API_BASE}/files/upload`, { method:'POST', body: fd })
+  const j = await res.json().catch(() => ({}))
+  if (!res.ok || !j.ok) { setStatus(j.error || `upload failed: ${res.status}`, false); return }
+  setStatus('Uploaded ✔', true)
+  await remoteList(filesState.remotePath)
+}
+
 
 function setStatus(text, ok = true) {
   const el = $('#status')
@@ -61,8 +246,8 @@ function normalizeResource(type, id, obj) {
 
   if (type === 'waypoints') {
     item.position = obj.position || (obj.feature?.geometry?.type === 'Point'
-      ? { latitude: obj.feature.geometry.coordinates[1], longitude: obj.feature.geometry.coordinates[0] }
-      : null)
+        ? { latitude: obj.feature.geometry.coordinates[1], longitude: obj.feature.geometry.coordinates[0] }
+        : null)
   }
   return item
 }
@@ -165,6 +350,17 @@ function escapeHtml(s) {
 }
 
 function render() {
+  const isFiles = state.tab === 'files'
+  setHidden($('#filesView'), !isFiles)
+  setHidden($('#tableWrap'), isFiles)
+  setHidden($('#filtersPanel'), isFiles)
+  if (isFiles) {
+    $('#listTitle').textContent = 'Files'
+    $('#listMeta').textContent = ''
+    renderFiles()
+    return
+  }
+
   $('#listTitle').textContent = state.tab[0].toUpperCase() + state.tab.slice(1)
   let list = getItemsForTab().map(it => {
     if (state.tab === 'waypoints') computeDerived(it)
@@ -223,7 +419,7 @@ function render() {
 async function refresh() {
   try {
     setStatus('Refreshing…')
-    await Promise.all([fetchResources('waypoints'), fetchResources('routes'), fetchResources('tracks')])
+    await Promise.all([fetchResources('waypoints'), fetchResources('routes')])
     render()
     setStatus('Ready', true)
   } catch (e) {
@@ -234,7 +430,7 @@ async function refresh() {
 async function gotoWaypoint(it) {
   try {
     setStatus('Setting goto…')
-    const res = await fetch('/plugins/signalk-mydata-plugin/goto', {
+    const res = await fetch(API_BASE+'/goto', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ waypoint: { id: it.id, name: it.name, position: it.position } })
@@ -247,7 +443,7 @@ async function gotoWaypoint(it) {
 async function showOnMap(it) {
   try {
     setStatus('Setting show on map…')
-    const res = await fetch('/plugins/signalk-mydata-plugin/show', {
+    const res = await fetch(API_BASE+'/show', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ waypoint: { id: it.id, name: it.name, position: it.position } })
@@ -437,6 +633,14 @@ function wire() {
 
   $('#btnExport').addEventListener('click', () => $('#dlgExport').showModal())
   $('#btnImport').addEventListener('click', () => $('#dlgImport').showModal())
+  // Files panel controls
+  $('#btnRemoteUp')?.addEventListener('click', remoteUp)
+  $('#btnRemoteRefresh')?.addEventListener('click', () => remoteList(filesState.remotePath))
+  $('#btnRemoteMkdir')?.addEventListener('click', remoteMkdir)
+  $('#remoteUpload')?.addEventListener('change', (e) => remoteUpload(e.target.files))
+  $('#localPick')?.addEventListener('change', (e) => { filesState.localFiles = Array.from(e.target.files || []); renderFiles() })
+  $('#btnLocalClear')?.addEventListener('click', () => { filesState.localFiles = []; renderFiles() })
+
   $('#doExport').addEventListener('click', (e) => { e.preventDefault(); doExport(); $('#dlgExport').close() })
   $('#doImport').addEventListener('click', (e) => { e.preventDefault(); doImport(); $('#dlgImport').close() })
   $('#doSave').addEventListener('click', (e) => { e.preventDefault(); saveWaypoint(); $('#dlgEdit').close() })
@@ -446,6 +650,7 @@ async function boot() {
   await loadIcons()
   wire()
   await refresh()
+  try { await remoteList('') } catch {}
   connectWS()
 }
 boot().catch(e => setStatus(e.message || String(e), false))
