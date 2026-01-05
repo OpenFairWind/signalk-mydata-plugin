@@ -411,7 +411,7 @@ function normalizeResource(type, id, obj) {
   // Prefer human-readable fields for name/description.
   item.name = obj.name || obj.title || id
   item.description = obj.description || obj.note || ''
-  item.icon = (obj.properties && obj.properties.icon) || obj.icon || ''
+  item.icon = obj.properties?.icon || obj.feature?.properties?.icon || obj.icon || ''
   item.updated = obj.timestamp || obj.updated || obj.modified || obj.created || null
 
   // Extract waypoint position when available.
@@ -561,14 +561,21 @@ function computePageSize(tab) {
   return calc || state.pageSize[tab] || 8
 }
 
+// Find icon metadata by id.
+function getIconMeta(iconId) {
+  if (!iconId) return null
+  return (state.icons?.icons || []).find(x => x.id === iconId) || null
+}
+
 // Render an icon cell using loaded manifest.
-function renderIconCell(iconId) {
+function renderIconCell(iconId, { fallbackId = 'waypoint' } = {}) {
   // Wrapper span for icon image.
   const wrap = document.createElement('span')
   // Assign styling class.
   wrap.className = 'imgicon'
+  const resolvedId = iconId || fallbackId
   // Find matching icon metadata.
-  const ic = (state.icons?.icons || []).find(x => x.id === iconId)
+  const ic = getIconMeta(resolvedId)
   // Fallback text when icon missing.
   if (!ic) { wrap.textContent = '—'; wrap.classList.add('muted'); return wrap }
   // Build image element.
@@ -577,6 +584,20 @@ function renderIconCell(iconId) {
   img.alt = ic.label
   img.style.filter = 'invert(1)'
   wrap.appendChild(img)
+  return wrap
+}
+
+// Render icon plus readable label for detail view.
+function renderIconDisplay(iconId) {
+  const wrap = document.createElement('div')
+  wrap.className = 'icon-display'
+  const ic = getIconMeta(iconId)
+  const fallback = ic ? null : getIconMeta('waypoint')
+  wrap.appendChild(renderIconCell(iconId, { fallbackId: 'waypoint' }))
+  const label = document.createElement('span')
+  label.className = 'icon-display__label'
+  label.textContent = ic?.label || iconId || fallback?.label || '—'
+  wrap.appendChild(label)
   return wrap
 }
 
@@ -691,30 +712,44 @@ function renderWaypointDetail(it, editMode) {
     return ta
   })() : document.createTextNode(raw.description || it.description || '')
 
-  const latField = editMode ? (() => {
-    const inp = document.createElement('input')
-    inp.type = 'number'
-    inp.step = '0.000001'
-    inp.id = 'detailEditLat'
-    inp.value = raw.position?.latitude ?? it.position?.latitude ?? ''
-    return inp
-  })() : document.createTextNode((raw.position?.latitude ?? it.position?.latitude ?? '—').toString())
+  const latVal = raw.position?.latitude ?? it.position?.latitude ?? null
+  const lonVal = raw.position?.longitude ?? it.position?.longitude ?? null
+  const coordsField = editMode ? (() => {
+    const wrap = document.createElement('div')
+    wrap.className = 'coords-row'
+    const inpLat = document.createElement('input')
+    inpLat.type = 'number'
+    inpLat.step = '0.000001'
+    inpLat.id = 'detailEditLat'
+    inpLat.placeholder = 'Latitude'
+    inpLat.value = latVal ?? ''
+    const inpLon = document.createElement('input')
+    inpLon.type = 'number'
+    inpLon.step = '0.000001'
+    inpLon.id = 'detailEditLon'
+    inpLon.placeholder = 'Longitude'
+    inpLon.value = lonVal ?? ''
+    wrap.appendChild(inpLat)
+    wrap.appendChild(inpLon)
+    return wrap
+  })() : (() => {
+    const wrap = document.createElement('div')
+    wrap.className = 'coords-row'
+    const latNode = document.createElement('div')
+    latNode.innerHTML = `<div class="muted">Lat</div><div>${latVal == null ? '—' : fmt(latVal, 6)}</div>`
+    const lonNode = document.createElement('div')
+    lonNode.innerHTML = `<div class="muted">Lon</div><div>${lonVal == null ? '—' : fmt(lonVal, 6)}</div>`
+    wrap.appendChild(latNode)
+    wrap.appendChild(lonNode)
+    return wrap
+  })()
 
-  const lonField = editMode ? (() => {
-    const inp = document.createElement('input')
-    inp.type = 'number'
-    inp.step = '0.000001'
-    inp.id = 'detailEditLon'
-    inp.value = raw.position?.longitude ?? it.position?.longitude ?? ''
-    return inp
-  })() : document.createTextNode((raw.position?.longitude ?? it.position?.longitude ?? '—').toString())
-
-  const iconField = editMode ? buildIconSelect(it.icon || raw.properties?.icon || '') : document.createTextNode(it.icon || raw.properties?.icon || '—')
+  const iconId = it.icon || raw.properties?.icon || raw.feature?.properties?.icon || ''
+  const iconField = editMode ? buildIconSelect(iconId) : renderIconDisplay(iconId)
 
   table.appendChild(propRow('Name', nameField))
   table.appendChild(propRow('Description', descField))
-  table.appendChild(propRow('Latitude', latField))
-  table.appendChild(propRow('Longitude', lonField))
+  table.appendChild(propRow('Position', coordsField))
   table.appendChild(propRow('Icon', iconField))
   return table
 }
@@ -1177,9 +1212,9 @@ async function saveWaypoint() {
 }
 
 // Delete a single resource after confirmation.
-async function deleteResource(it) {
+async function deleteResource(it, { skipConfirm = false } = {}) {
   try {
-    if (!confirm(`Delete ${it.type.slice(0,-1)} "${it.name}"?`)) return
+    if (!skipConfirm && !confirm(`Delete ${it.type.slice(0,-1)} "${it.name}"?`)) return
     setStatus('Deleting…')
     if (it.type === 'files') {
       const ok = await remoteDelete(it.id, false)
@@ -1204,7 +1239,7 @@ async function bulkDelete() {
     for (const k of keys) {
       const id = k.split(':')[1]
       const it = itemMap.get(id)
-      if (it) await deleteResource(it)
+      if (it) await deleteResource(it, { skipConfirm: true })
     }
     state.selected.clear()
     await remoteList(filesState.remotePath)
@@ -1213,7 +1248,7 @@ async function bulkDelete() {
   for (const k of keys) {
     const id = k.split(':')[1]
     const it = normalizeResource(state.tab, id, state.resources[state.tab][id])
-    await deleteResource(it)
+    await deleteResource(it, { skipConfirm: true })
   }
   state.selected.clear()
   await refresh()
