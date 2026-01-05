@@ -1,10 +1,10 @@
-# Signal K Webapp: MyData (Waypoints / Routes / Tracks)
+# Signal K Webapp: MyData (Waypoints / Routes / Files)
 
 A **Signal K Node Server** plugin that provides a lightweight webapp to browse and manage:
 
 - **Waypoints** (distance + bearing from vessel position, **GoTo** button)
 - **Routes**
-- **Tracks**
+- **Files**
 
 Features:
 - Waypoint **distance / bearing** (computed from `vessels.self.navigation.position`)
@@ -16,10 +16,7 @@ Features:
 - Files area for browsing a configurable server-side root:
   - create folders, upload/download files, inline previews for text and common binary MIME types (images, audio, video, PDF)
   - client-side preview for picked local files
-- Import/Export **CSV**, **GPX**, **KML** (currently implemented for **waypoints**)
-
-UI icons source:
-https://www.openbridge.no/cases/openbridge-icons
+- Import/Export **CSV**, **GPX**, **KML**, **geoJSON**
 
 ## Install
 
@@ -30,14 +27,14 @@ From Signal K Node Server UI:
 
 ## Open
 
-Default mount path: `/webapps/mydata`
+Default mount path: `/signalk-mydata-plugin`
 
 ## Notes
 
 - CRUD uses the standard Signal K resources API:
   - `/signalk/v1/api/resources/waypoints`
   - `/signalk/v1/api/resources/routes`
-  - `/signalk/v1/api/resources/tracks`
+ 
 
 ## License
 

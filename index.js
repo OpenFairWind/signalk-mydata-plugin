@@ -221,7 +221,7 @@ module.exports = function (app) {
         req.pipe(bb)
       })
 
-      router.post(`/goto`, (req, res) => {
+      router.post(`/goto`, async (req, res) => {
         try {
           const wp = req.body && req.body.waypoint ? req.body.waypoint : null
           if (!wp || !wp.position || wp.position.latitude == null || wp.position.longitude == null) {
@@ -233,30 +233,45 @@ module.exports = function (app) {
           const name = wp.name || wp.id || 'Waypoint'
           const href = wp.id ? `/signalk/v2/api/resources/waypoints/${encodeURIComponent(wp.id)}` : null
 
-          const timestamp = new Date().toISOString()
-          const delta = {
-            context: 'vessels.self',
-            updates: [{
-              source: { label: plugin.id, type: 'plugin' },
-              timestamp,
-              values: [
-                {
-                  path: 'navigation.courseRhumbline.nextPoint.position',
-                  value: { latitude: lat, longitude: lon }
-                },
-                {
-                  path: 'navigation.courseRhumbline.nextPoint.name',
-                  value: name
-                },
-                ...(href ? [{
-                  path: 'navigation.courseRhumbline.nextPoint.href',
-                  value: href
-                }] : [])
-              ]
-            }]
+          const destination = {
+            name,
+            position: { latitude: lat, longitude: lon },
+            ...(href ? { href } : {})
           }
+          const useCourseApi = typeof app.setDestination === 'function'
+          if (useCourseApi) {
+            const result = app.setDestination(destination)
+            if (result && typeof result.then === 'function') {
+              await result
+            }
+            lastMessage = `Destination set via Course API: ${name}`
+          } else {
+            const timestamp = new Date().toISOString()
+            const delta = {
+              context: 'vessels.self',
+              updates: [{
+                source: { label: plugin.id, type: 'plugin' },
+                timestamp,
+                values: [
+                  {
+                    path: 'navigation.courseRhumbline.nextPoint.position',
+                    value: { latitude: lat, longitude: lon }
+                  },
+                  {
+                    path: 'navigation.courseRhumbline.nextPoint.name',
+                    value: name
+                  },
+                  ...(href ? [{
+                    path: 'navigation.courseRhumbline.nextPoint.href',
+                    value: href
+                  }] : [])
+                ]
+              }]
+            }
 
-          app.handleMessage(plugin.id, delta)
+            app.handleMessage(plugin.id, delta)
+            lastMessage = `Destination set via delta fallback: ${name}`
+          }
           res.json({ ok: true })
         } catch (e) {
           res.status(500).json({ ok: false, error: e.message || String(e) })
