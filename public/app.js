@@ -35,6 +35,78 @@ function setHidden(el, hidden) {
   el.classList.toggle('hidden', hidden)
 }
 
+function setPreview(metaText, node) {
+  $('#previewMeta').textContent = metaText
+  const host = $('#previewBody')
+  host.innerHTML = ''
+  if (node) host.appendChild(node)
+}
+
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary)
+}
+
+function previewText(text) {
+  const pre = document.createElement('pre')
+  pre.className = 'preview__text'
+  pre.textContent = text || ''
+  return pre
+}
+
+function isPreviewableMime(mime) {
+  return mime && (mime.startsWith('image/') || mime.startsWith('audio/') || mime.startsWith('video/') || mime === 'application/pdf')
+}
+
+function previewBinary(mime, data) {
+  const wrap = document.createElement('div')
+  wrap.className = 'preview__binary'
+  if (!mime || !data) {
+    wrap.textContent = 'Binary file — use Download'
+    wrap.classList.add('muted')
+    return wrap
+  }
+
+  const dataUrl = `data:${mime};base64,${data}`
+  if (mime.startsWith('image/')) {
+    const img = new Image()
+    img.src = dataUrl
+    img.alt = 'Preview'
+    img.className = 'preview__media'
+    wrap.appendChild(img)
+    return wrap
+  }
+  if (mime.startsWith('audio/')) {
+    const audio = document.createElement('audio')
+    audio.controls = true
+    audio.src = dataUrl
+    audio.style.width = '100%'
+    wrap.appendChild(audio)
+    return wrap
+  }
+  if (mime.startsWith('video/')) {
+    const video = document.createElement('video')
+    video.controls = true
+    video.src = dataUrl
+    video.style.width = '100%'
+    video.style.maxHeight = '200px'
+    wrap.appendChild(video)
+    return wrap
+  }
+  if (mime === 'application/pdf') {
+    const iframe = document.createElement('iframe')
+    iframe.src = dataUrl
+    iframe.className = 'preview__frame'
+    wrap.appendChild(iframe)
+    return wrap
+  }
+  wrap.textContent = 'Binary file — use Download'
+  wrap.classList.add('muted')
+  return wrap
+}
+
 async function remoteList(pathRel='') {
   const res = await fetch(`${API_BASE}/files/list?path=${encodeURIComponent(pathRel)}`)
   const j = await res.json()
@@ -110,12 +182,18 @@ async function remotePreview(relPath) {
     const j = await res.json()
     if (!res.ok || !j.ok) throw new Error(j.error || `Read failed: ${res.status}`)
     filesState.selectedRemote = relPath
-    $('#previewMeta').textContent = `${relPath} • ${j.kind} • ${humanSize(j.size)}`
-    if (j.kind === 'text') $('#previewText').textContent = j.text || ''
-    else $('#previewText').textContent = '(binary file — use Download)'
+    const meta = `${relPath} • ${j.mime || j.kind} • ${humanSize(j.size)}`
+    if (j.kind === 'text') {
+      setPreview(meta, previewText(j.text || ''))
+      return
+    }
+    if (j.kind === 'binary' && j.data && isPreviewableMime(j.mime)) {
+      setPreview(meta, previewBinary(j.mime, j.data))
+      return
+    }
+    setPreview(meta, previewText('(binary file — use Download)'))
   } catch (e) {
-    $('#previewMeta').textContent = 'Preview error'
-    $('#previewText').textContent = e.message || String(e)
+    setPreview('Preview error', previewText(e.message || String(e)))
   }
 }
 
@@ -147,9 +225,19 @@ function renderLocalList() {
     open.textContent = 'Preview'
     open.addEventListener('click', async (ev) => {
       ev.stopPropagation()
+      const meta = `${f.name} • local • ${humanSize(f.size)}`
+      if (f.size > 2 * 1024 * 1024) {
+        setPreview(meta, previewText('File too large for inline preview'))
+        return
+      }
+      if (f.type && isPreviewableMime(f.type)) {
+        const data = await f.arrayBuffer()
+        const b64 = arrayBufferToBase64(data)
+        setPreview(meta, previewBinary(f.type, b64))
+        return
+      }
       const text = await f.text().catch(() => null)
-      $('#previewMeta').textContent = `${f.name} • local • ${humanSize(f.size)}`
-      $('#previewText').textContent = text ?? '(binary file)'
+      setPreview(meta, previewText(text ?? '(binary file)'))
     })
     acts.appendChild(open)
 

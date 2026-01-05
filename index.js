@@ -64,6 +64,33 @@ module.exports = function (app) {
     plugin.registerWithRouter = (router) => {
 
 
+      const TEXT_EXTS = ['.txt','.log','.md','.json','.geojson','.gpx','.kml','.csv','.xml','.yaml','.yml']
+      const MIME_MAP = {
+        '.txt': 'text/plain',
+        '.log': 'text/plain',
+        '.md': 'text/markdown',
+        '.json': 'application/json',
+        '.geojson': 'application/geo+json',
+        '.gpx': 'application/gpx+xml',
+        '.kml': 'application/vnd.google-earth.kml+xml',
+        '.csv': 'text/csv',
+        '.xml': 'application/xml',
+        '.yaml': 'application/yaml',
+        '.yml': 'application/yaml',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.pdf': 'application/pdf',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.ogg': 'audio/ogg',
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm'
+      }
+
       function safeJoin(root, rel) {
         const r = (rel || '').replace(/\\/g, '/')
         const cleaned = r.replace(/^\/+/, '') // force relative
@@ -118,9 +145,21 @@ module.exports = function (app) {
           }
           const buf = await fsp.readFile(full)
           const ext = path.extname(full).toLowerCase()
-          const isText = ['.txt','.log','.md','.json','.geojson','.gpx','.kml','.csv','.xml','.yaml','.yml'].includes(ext)
-          if (!isText) return res.json({ ok: true, kind: 'binary', size: st.size })
-          res.json({ ok: true, kind: 'text', size: st.size, text: buf.toString('utf8') })
+          const mime = MIME_MAP[ext] || 'application/octet-stream'
+          const isText = TEXT_EXTS.includes(ext)
+          const previewable = (!isText) && (
+            mime.startsWith('image/') ||
+            mime.startsWith('audio/') ||
+            mime.startsWith('video/') ||
+            mime === 'application/pdf'
+          )
+          if (!isText && !previewable) {
+            return res.json({ ok: true, kind: 'binary', size: st.size, mime })
+          }
+          if (previewable) {
+            return res.json({ ok: true, kind: 'binary', size: st.size, mime, data: buf.toString('base64'), encoding: 'base64' })
+          }
+          res.json({ ok: true, kind: 'text', size: st.size, mime, text: buf.toString('utf8') })
         } catch (e) {
           res.status(400).json({ ok: false, error: e.message || String(e) })
         }
@@ -192,12 +231,13 @@ module.exports = function (app) {
           const lat = Number(wp.position.latitude)
           const lon = Number(wp.position.longitude)
           const name = wp.name || wp.id || 'Waypoint'
+          const href = wp.id ? `/signalk/v2/api/resources/waypoints/${encodeURIComponent(wp.id)}` : null
 
           const timestamp = new Date().toISOString()
           const delta = {
             context: 'vessels.self',
             updates: [{
-              source: { label: plugin.Id },
+              source: { label: plugin.id, type: 'plugin' },
               timestamp,
               values: [
                 {
@@ -207,12 +247,16 @@ module.exports = function (app) {
                 {
                   path: 'navigation.courseRhumbline.nextPoint.name',
                   value: name
-                }
+                },
+                ...(href ? [{
+                  path: 'navigation.courseRhumbline.nextPoint.href',
+                  value: href
+                }] : [])
               ]
             }]
           }
 
-          app.handleMessage(plugin.ic, delta)
+          app.handleMessage(plugin.id, delta)
           res.json({ ok: true })
         } catch (e) {
           res.status(500).json({ ok: false, error: e.message || String(e) })
