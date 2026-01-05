@@ -175,6 +175,17 @@ export function parseGeoJSON(text) {
   else throw new Error('GeoJSON must be a Feature or FeatureCollection') // Guard invalid inputs.
 
   const items = [] // Output array.
+  const pickFirst = (...vals) => {
+    for (const v of vals) if (v !== undefined && v !== null && v !== '') return v
+    return null
+  }
+  const toText = (v, fallback='') => {
+    if (v === undefined || v === null) return fallback
+    if (typeof v === 'string') return v.trim()
+    if (typeof v === 'number' || typeof v === 'boolean') return v.toString()
+    if (Array.isArray(v)) return v.join(', ')
+    try { return v.toString() } catch { return fallback }
+  }
 
   // Helper to flatten line-based geometries into route/track items.
   const addLine = (kind, name, description, coords) => {
@@ -188,8 +199,8 @@ export function parseGeoJSON(text) {
     if (!f || f.type !== 'Feature' || !f.geometry) continue // Skip invalid features.
     const g = f.geometry // Geometry reference.
     const p = f.properties || {} // Properties map.
-    const name = (p.name || p.title || 'Item').toString() // Preferred name.
-    const description = (p.description || p.desc || '').toString() // Preferred description.
+    const name = toText(pickFirst(p.name, p.title, f.name, f.id, 'Waypoint'), 'Waypoint') // Preferred name.
+    const description = toText(pickFirst(p.description, p.desc, p.note, f.description, ''), '') // Preferred description.
     const kindProp = (p.kind || p.type || '').toString().toLowerCase() // Explicit kind property.
     const kindFromGeom = g.type === 'Point' ? 'waypoint' : (g.type === 'LineString' || g.type === 'MultiLineString') ? 'track' : '' // Infer kind.
     const kind = (kindProp === 'route' || kindProp === 'track' || kindProp === 'waypoint') ? kindProp : kindFromGeom // Decide kind.

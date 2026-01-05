@@ -60,48 +60,37 @@
         </label>
       </div>
 
-      <div class="actions">
-        <button class="btn" id="btnImport"><span class="icon" data-icon="upload"></span> Import…</button>
-        <button class="btn" id="btnExport"><span class="icon" data-icon="download"></span> Export…</button>
-      </div>
-
-    </div>
-
-    <div class="panel__section">
-      <div class="panel__title">Bulk actions</div>
-      <div class="actions">
-        <button class="btn btn--danger" id="btnBulkDelete"><span class="icon" data-icon="trash"></span> Delete selected</button>
-      </div>
-      <label class="checkbox">
-        <input type="checkbox" id="selectAll" />
-        <span>Select all in list</span>
-      </label>
-    </div>
-
-    <div class="panel__section">
-      <div class="panel__title">Create waypoint</div>
-      <div class="muted small">Quick create a waypoint at current position.</div>
-      <div class="actions">
-        <button class="btn" id="btnCreateHere"><span class="icon" data-icon="pin"></span> Create at vessel position</button>
-      </div>
-    </div>
-
-    <div class="panel__section">
-      <div class="status" id="status">Connecting…</div>
-      <button class="btn btn--ghost" id="btnRefresh" title="Refresh">
-        <span class="icon" data-icon="refresh"></span>
-      </button>
     </div>
   </aside>
 
   <section class="content">
     <div class="content__header">
-      <div class="content__title" id="listTitle">Waypoints</div>
-      <div class="content__meta" id="listMeta">—</div>
-      <div class="pager" id="listPager">
-        <button class="btn btn--tiny" id="btnPagePrev"><span class="icon" data-icon="arrow-left"></span>Prev</button>
-        <div class="pager__info" id="pagerInfo">Page 1</div>
-        <button class="btn btn--tiny" id="btnPageNext">Next <span class="icon" data-icon="arrow-right"></span></button>
+      <div class="content__head">
+        <div class="content__title" id="listTitle">Waypoints</div>
+        <div class="content__meta-row">
+          <div class="content__meta" id="listMeta">—</div>
+          <div class="status" id="status">Connecting…</div>
+        </div>
+      </div>
+      <div class="content__toolbar" id="contentToolbar">
+        <div class="pager" id="listPager">
+          <button class="btn btn--tiny" id="btnPagePrev"><span class="icon" data-icon="arrow-left"></span>Prev</button>
+          <div class="pager__info" id="pagerInfo">Page 1</div>
+          <button class="btn btn--tiny" id="btnPageNext">Next <span class="icon" data-icon="arrow-right"></span></button>
+        </div>
+        <div class="content__actions" id="contentActions">
+          <button class="btn btn--tiny" id="btnCreateHere"><span class="icon" data-icon="pin"></span> Create at vessel position</button>
+          <button class="btn btn--tiny" id="btnImport"><span class="icon" data-icon="upload"></span> Import…</button>
+          <button class="btn btn--tiny" id="btnExport"><span class="icon" data-icon="download"></span> Export…</button>
+          <button class="btn btn--tiny btn--danger" id="btnBulkDelete"><span class="icon" data-icon="trash"></span> Delete selected</button>
+          <label class="checkbox checkbox--inline">
+            <input type="checkbox" id="selectAll" />
+            <span>Select all in list</span>
+          </label>
+          <button class="btn btn--tiny btn--ghost" id="btnRefresh" title="Refresh">
+            <span class="icon" data-icon="refresh"></span> Refresh
+          </button>
+        </div>
       </div>
     </div>
 
@@ -160,11 +149,11 @@
                   <div class="muted small" id="viewerMeta">Select a file…</div>
                 </div>
                 <div class="viewer__actions">
-                  <button class="btn btn--tiny" id="btnViewerFullscreen"><span class="icon" data-icon="fullscreen"></span>Full viewport</button>
-                  <button class="btn btn--tiny btn--ghost hidden" id="btnExitViewport"><span class="icon" data-icon="close"></span>Exit full view</button>
+                  <button class="btn btn--tiny" id="btnViewerFullscreen"><span class="icon" data-icon="fullscreen"></span>Full screen</button>
+                  <button class="btn btn--tiny btn--ghost hidden" id="btnExitViewport"><span class="icon" data-icon="close"></span>Exit full screen</button>
                   <button class="btn btn--tiny" id="btnOpenText"><span class="icon" data-icon="edit"></span>Edit text</button>
                   <button class="btn btn--tiny" id="btnOpenImage"><span class="icon" data-icon="image"></span>Edit image</button>
-                  <button class="btn btn--tiny" id="btnCloseEditor"><span class="icon" data-icon="close"></span>Close editor</button>
+                  <button class="btn btn--tiny" id="btnCloseEditor"><span class="icon" data-icon="close"></span>Cancel</button>
                   <button class="btn btn--tiny" id="btnSaveEditor"><span class="icon" data-icon="save"></span>Save</button>
                 </div>
               </div>
