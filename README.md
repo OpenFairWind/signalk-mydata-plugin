@@ -29,19 +29,21 @@ From Signal K Node Server UI:
 
 Default mount path: `/signalk-mydata-plugin`
 
-## Notes
 
-- CRUD uses the standard Signal K resources API:
-  - `/signalk/v2/api/resources/waypoints`
-  - `/signalk/v2/api/resources/routes`
-  - `/signalk/v2/api/resources/tracks`
 
 ## Documentation
 
 - [Getting started](./docs/getting_started.md)
 - [Configuration](./docs/configure.md)
 - [FairWindSK integration](./docs/fairwindsk_integration.md)
- 
+
+## Screenshots
+
+![mydata01](docs/figures/mydata01.png "MyData embedded intoFairWindSK")
+
+![mydata02](docs/figures/mydata02.png "Waypoiny details")
+
+![mydata03](docs/figures/mydata03.png "File browsing")
 
 ## License
 
