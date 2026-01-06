@@ -468,7 +468,7 @@ async function loadIcons() {
   // Load OpenBridge icon manifest and wire select options/mask images.
   async function loadWaypointTypes() {
     // Fetch manifest with cache busting.
-    const res = await fetch('./waypointTypes.json', { cache: 'no-cache' })
+    const res = await fetch('./waypoints.json', { cache: 'no-cache' })
     // Store manifest JSON.
     state.waypointsTypes = await res.json()
 
