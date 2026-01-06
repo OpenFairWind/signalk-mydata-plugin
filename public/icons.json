@@ -7,26 +7,6 @@
       "path": "marker.svg"
     },
     {
-      "id": "waypoint",
-      "label": "Waypoint",
-      "path": "waypoint.svg"
-    },
-    {
-      "id": "harbor",
-      "label": "Harbor",
-      "path": "harbor.svg"
-    },
-    {
-      "id": "anchor",
-      "label": "Anchor",
-      "path": "anchor.svg"
-    },
-    {
-      "id": "danger",
-      "label": "Danger",
-      "path": "warning.svg"
-    },
-    {
       "id": "edit",
       "label": "Edit",
       "path": "edit.svg"
