@@ -31,6 +31,63 @@ const state = {
   // Detail panel state.
   detail: { item: null, edit: false, preview: null, isNew: false }
 }
+// Track long-running operations with optional abort handles.
+const progress = {
+  controller: null,
+  current: null
+}
+
+// UI helpers for showing/hiding overlay progress bar.
+function showProgress(text, { indeterminate = true } = {}) {
+  const overlay = $('#progressOverlay')
+  const txt = $('#progressText')
+  const fill = $('#progressFill')
+  if (!overlay || !txt || !fill) return
+  overlay.classList.remove('hidden')
+  overlay.setAttribute('aria-busy', 'true')
+  txt.textContent = text || 'Working…'
+  fill.style.width = indeterminate ? '25%' : '0%'
+  fill.classList.toggle('progress__fill--indeterminate', indeterminate)
+}
+
+function updateProgress(percent, text) {
+  const fill = $('#progressFill')
+  const txt = $('#progressText')
+  if (!fill || !txt) return
+  if (text) txt.textContent = text
+  const pct = Math.max(0, Math.min(100, percent))
+  fill.style.width = `${pct}%`
+  fill.classList.remove('progress__fill--indeterminate')
+}
+
+function hideProgress() {
+  const overlay = $('#progressOverlay')
+  const fill = $('#progressFill')
+  if (!overlay || !fill) return
+  overlay.classList.add('hidden')
+  overlay.removeAttribute('aria-busy')
+  fill.style.width = '0%'
+  fill.classList.remove('progress__fill--indeterminate')
+  progress.controller = null
+  progress.current = null
+}
+
+function beginProgress(text, opts = {}) {
+  const ctrl = new AbortController()
+  progress.controller = ctrl
+  progress.current = opts.key || null
+  showProgress(text, opts)
+  return ctrl
+}
+
+function cancelProgress() {
+  if (progress.controller?.abort) progress.controller.abort()
+  hideProgress()
+  setStatus('Operation cancelled', false)
+}
+
+// Attach cancel handler for progress overlay.
+$('#btnCancelProgress')?.addEventListener('click', cancelProgress)
 // Websocket monitor handles.
 const WS_CHECK_INTERVAL = 7000
 let liveSocket = null
@@ -48,6 +105,51 @@ function genUuid() {
     return v.toString(16)
   }) + '-' + t.slice(-4)
 }
+
+// Track long-running operations with optional abort handles.
+const progress = {
+  controller: null,
+  current: null
+}
+
+// UI helpers for showing/hiding overlay progress bar.
+function showProgress(text, { indeterminate = true } = {}) {
+  const overlay = $('#progressOverlay')
+  const txt = $('#progressText')
+  const fill = $('#progressFill')
+  if (!overlay || !txt || !fill) return
+  overlay.classList.remove('hidden')
+  overlay.setAttribute('aria-busy', 'true')
+  txt.textContent = text || 'Working…'
+  fill.style.width = indeterminate ? '25%' : '0%'
+  fill.classList.toggle('progress__fill--indeterminate', indeterminate)
+}
+
+function updateProgress(percent, text) {
+  const fill = $('#progressFill')
+  const txt = $('#progressText')
+  if (!fill || !txt) return
+  if (text) txt.textContent = text
+  const pct = Math.max(0, Math.min(100, percent))
+  fill.style.width = `${pct}%`
+  fill.classList.remove('progress__fill--indeterminate')
+}
+
+function hideProgress() {
+  const overlay = $('#progressOverlay')
+  const fill = $('#progressFill')
+  if (!overlay || !fill) return
+  overlay.classList.add('hidden')
+  overlay.removeAttribute('aria-busy')
+  fill.style.width = '0%'
+  fill.classList.remove('progress__fill--indeterminate')
+  if (progress.controller?.abort) progress.controller.abort()
+  progress.controller = null
+  progress.current = null
+}
+
+// Attach cancel handler for progress overlay.
+$('#btnCancelProgress')?.addEventListener('click', () => hideProgress())
 
 // State dedicated to remote file operations and editors.
 const filesState = {
@@ -275,6 +377,7 @@ async function remoteMkdir() {
 async function remoteUpload(files) {
   // Ignore when nothing selected.
   if (!files || !files.length) return
+  const ctrl = beginProgress('Uploading files…')
   // Prepare multipart form data.
   const fd = new FormData()
   // Append directory path.
@@ -282,14 +385,21 @@ async function remoteUpload(files) {
   // Append every file using shared field name.
   for (const f of files) fd.append('file', f, f.name)
   // POST to upload endpoint.
-  const res = await fetch(`${API_BASE}/files/upload`, { method:'POST', body: fd })
-  // Parse JSON reply.
-  const j = await res.json().catch(() => ({}))
-  // Signal errors in UI.
-  if (!res.ok || !j.ok) { setStatus(j.error || `upload failed: ${res.status}`, false); return }
-  // Inform user of success and refresh listing.
-  setStatus('Uploaded ✔', true)
-  await remoteList(filesState.remotePath)
+  try {
+    const res = await fetch(`${API_BASE}/files/upload`, { method:'POST', body: fd, signal: ctrl.signal })
+    // Parse JSON reply.
+    const j = await res.json().catch(() => ({}))
+    // Signal errors in UI.
+    if (!res.ok || !j.ok) throw new Error(j.error || `upload failed: ${res.status}`)
+    // Inform user of success and refresh listing.
+    setStatus('Uploaded ✔', true)
+    await remoteList(filesState.remotePath)
+  } catch (e) {
+    if (ctrl.signal.aborted) setStatus('Upload cancelled', false)
+    else setStatus(e.message || String(e), false)
+  } finally {
+    hideProgress()
+  }
 }
 
 // Create or overwrite a text file on the server.
@@ -303,6 +413,33 @@ async function remoteSaveText(pathRel, text) {
   // Inform success.
   setStatus('Saved ✔', true)
   return true
+}
+
+// Download a remote file or directory (as zip) with cancel support.
+async function remoteDownload(pathRel) {
+  const ctrl = beginProgress('Downloading…')
+  try {
+    const res = await fetch(`${API_BASE}/files/download?path=${encodeURIComponent(pathRel)}`, { signal: ctrl.signal })
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`)
+    const blob = await res.blob()
+    const disp = res.headers.get('Content-Disposition') || ''
+    const m = /filename=\"?([^\";]+)\"?/i.exec(disp)
+    const name = m?.[1] || pathRel.split('/').pop() || 'download'
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    setStatus('Download started ✔', true)
+  } catch (e) {
+    if (ctrl.signal.aborted) setStatus('Download cancelled', false)
+    else setStatus(e.message || String(e), false)
+  } finally {
+    hideProgress()
+  }
 }
 
 // Rename a remote file by supplying new path.
@@ -368,11 +505,11 @@ async function loadIcons() {
   state.icons = await res.json()
 
   // Populate select elements for filter and edit dialogs.
-  for (const sel of [$('#filterIcon'), $('#editIcon')]) {
+  for (const sel of [$('#filterIcon'), $('#editType'), $('#editIconOverride')]) {
     sel.innerHTML = ''
     const optAny = document.createElement('option')
     optAny.value = ''
-    optAny.textContent = sel.id === 'editIcon' ? '— choose —' : 'Any'
+    optAny.textContent = sel.id === 'filterIcon' ? 'Any' : '— choose —'
     sel.appendChild(optAny)
 
     for (const ic of state.icons.icons) {
@@ -411,7 +548,11 @@ function normalizeResource(type, id, obj) {
   // Prefer human-readable fields for name/description.
   item.name = obj.name || obj.title || id
   item.description = obj.description || obj.note || ''
-  item.icon = obj.properties?.icon || obj.feature?.properties?.icon || obj.icon || ''
+  const wpProps = type === 'waypoints' ? extractWaypointMeta(obj) : {}
+  item.icon = wpProps.icon || ''
+  item.wpType = wpProps.type || ''
+  item.skIcon = wpProps.skIcon || ''
+  if (!item.icon && type === 'waypoints') item.icon = iconForType(item.wpType) || 'waypoint'
   item.updated = obj.timestamp || obj.updated || obj.modified || obj.created || null
 
   // Extract waypoint position when available.
@@ -422,6 +563,23 @@ function normalizeResource(type, id, obj) {
   }
   // Return normalized record for rendering.
   return item
+}
+
+// Map waypoint type to preferred icon id.
+function iconForType(type) {
+  if (!type) return null
+  const exists = state.icons?.icons?.some(ic => ic.id === type)
+  return exists ? type : null
+}
+
+// Extract waypoint type/skIcon/icon metadata.
+function extractWaypointMeta(obj = {}) {
+  const props = obj.properties || obj.feature?.properties || {}
+  const type = props.type || obj.type || ''
+  const skIcon = props.skIcon || ''
+  const explicitIcon = props.icon || obj.icon || ''
+  const resolved = skIcon || iconForType(type) || explicitIcon || ''
+  return { type, skIcon, icon: resolved }
 }
 
 // Compute derived metrics (distance/bearing) based on vessel position.
@@ -439,7 +597,7 @@ function computeDerived(item) {
 }
 
 // Build a waypoint payload including GeoJSON feature metadata.
-function buildWaypointPayload({ id, name, description, position, icon, existing }) {
+function buildWaypointPayload({ id, name, description, position, icon, type, skIcon, properties = {}, existing }) {
   const payload = existing ? JSON.parse(JSON.stringify(existing)) : {}
   if (id) payload.id = id
   if (name !== undefined) payload.name = name
@@ -456,6 +614,14 @@ function buildWaypointPayload({ id, name, description, position, icon, existing 
     payload.feature.geometry = { type: 'Point', coordinates: [lon, lat] }
     const fp = { ...(payload.feature.properties || {}) }
     fp.kind = 'waypoint'
+    if (type !== undefined) {
+      if (type) fp.type = type
+      else delete fp.type
+    }
+    if (skIcon !== undefined) {
+      if (skIcon) fp.skIcon = skIcon
+      else delete fp.skIcon
+    }
     if (name !== undefined) fp.name = name
     if (description !== undefined) fp.description = description
     if (icon) fp.icon = icon
@@ -463,8 +629,17 @@ function buildWaypointPayload({ id, name, description, position, icon, existing 
   }
 
   const props = { ...(payload.properties || {}) }
+  if (type !== undefined) {
+    if (type) props.type = type
+    else delete props.type
+  }
+  if (skIcon !== undefined) {
+    if (skIcon) props.skIcon = skIcon
+    else delete props.skIcon
+  }
   if (icon) props.icon = icon
   else delete props.icon
+  Object.assign(props, properties)
   if (Object.keys(props).length) payload.properties = props
   else delete payload.properties
 
@@ -633,12 +808,10 @@ function renderActions(it) {
     wrap.appendChild(btnTiny('goto', 'Go to', () => gotoWaypoint(it)))
     wrap.appendChild(btnTiny('map', 'Show on map', () => showOnMap(it)))
   } else if (it.type === 'files') {
-    if (it.fileType === 'file') {
-      wrap.appendChild(btnTiny('download', 'Download', (ev) => {
-        ev.stopPropagation()
-        window.open(`${API_BASE}/files/download?path=${encodeURIComponent(it.id)}`, '_blank')
-      }))
-    }
+    wrap.appendChild(btnTiny('download', 'Download', (ev) => {
+      ev.stopPropagation()
+      remoteDownload(it.id)
+    }))
     wrap.appendChild(btnTiny('edit', 'View', () => openDetail(it)))
     wrap.appendChild(btnTiny('trash', 'Delete', () => deleteResource(it)))
   } else {
@@ -675,7 +848,6 @@ function propRow(label, valueNode) {
 // Build a select element for icons.
 function buildIconSelect(selected = '') {
   const sel = document.createElement('select')
-  sel.id = 'detailEditIcon'
   const blank = document.createElement('option')
   blank.value = ''
   blank.textContent = '— choose —'
@@ -744,12 +916,26 @@ function renderWaypointDetail(it, editMode) {
     return wrap
   })()
 
+  const typeVal = raw.properties?.type || raw.feature?.properties?.type || it.wpType || ''
+  const skIconVal = raw.properties?.skIcon || raw.feature?.properties?.skIcon || it.skIcon || ''
   const iconId = it.icon || raw.properties?.icon || raw.feature?.properties?.icon || ''
-  const iconField = editMode ? buildIconSelect(iconId) : renderIconDisplay(iconId)
+  const iconField = editMode ? buildIconSelect(skIconVal) : renderIconDisplay(iconId || skIconVal || typeVal)
+  const typeField = editMode ? (() => {
+    const sel = buildIconSelect(typeVal)
+    sel.id = 'detailEditType'
+    return sel
+  })() : document.createTextNode(typeVal || '—')
+  const iconOverrideField = editMode ? (() => {
+    const sel = buildIconSelect(skIconVal)
+    sel.id = 'detailEditIconOverride'
+    return sel
+  })() : document.createTextNode(skIconVal || '—')
 
   table.appendChild(propRow('Name', nameField))
   table.appendChild(propRow('Description', descField))
   table.appendChild(propRow('Position', coordsField))
+  table.appendChild(propRow('Type', typeField))
+  table.appendChild(propRow('Icon override', iconOverrideField))
   table.appendChild(propRow('Icon', iconField))
   return table
 }
@@ -854,8 +1040,8 @@ async function renderDetail() {
     actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
     body.appendChild(renderRouteDetail(item))
   } else if (item.type === 'files') {
+    actions.appendChild(btnTiny('download', 'Download', () => remoteDownload(item.id)))
     if (item.fileType === 'file') {
-      actions.appendChild(btnTiny('download', 'Download', () => window.open(`${API_BASE}/files/download?path=${encodeURIComponent(item.id)}`, '_blank')))
       actions.appendChild(btnTiny('edit', 'Rename', async () => {
         const base = item.id.split('/').pop()
         const next = prompt('New name:', base)
@@ -918,7 +1104,8 @@ async function saveDetail() {
     const description = $('#detailEditDesc')?.value?.trim()
     const lat = parseFloat($('#detailEditLat')?.value)
     const lon = parseFloat($('#detailEditLon')?.value)
-    const icon = $('#detailEditIcon')?.value?.trim()
+    const wpType = $('#detailEditType')?.value?.trim()
+    const skIcon = $('#detailEditIconOverride')?.value?.trim()
     if (!name || Number.isNaN(lat) || Number.isNaN(lon)) { setStatus('Missing name/position', false); return }
     const orig = state.resources.waypoints[item.id]
     if (!orig) { setStatus('Waypoint not found in cache', false); return }
@@ -927,7 +1114,8 @@ async function saveDetail() {
       name,
       description,
       position: { latitude: lat, longitude: lon },
-      icon,
+      type: wpType,
+      skIcon,
       existing: orig
     })
     try {
@@ -1172,7 +1360,8 @@ async function editWaypoint(it) {
   $('#editDesc').value = it.description || ''
   $('#editLat').value = it.position?.latitude ?? ''
   $('#editLon').value = it.position?.longitude ?? ''
-  $('#editIcon').value = it.icon || ''
+  $('#editType').value = it.wpType || ''
+  $('#editIconOverride').value = it.skIcon || ''
   dlg.showModal()
 }
 
@@ -1183,7 +1372,8 @@ async function saveWaypoint() {
   const description = $('#editDesc').value.trim()
   const lat = parseFloat($('#editLat').value)
   const lon = parseFloat($('#editLon').value)
-  const icon = $('#editIcon').value.trim()
+  const wpType = $('#editType').value.trim()
+  const skIcon = $('#editIconOverride').value.trim()
   if (!id || !name || Number.isNaN(lat) || Number.isNaN(lon)) { setStatus('Missing name/position', false); return }
 
   const orig = state.resources.waypoints[id]
@@ -1194,7 +1384,8 @@ async function saveWaypoint() {
     name,
     description,
     position: { latitude: lat, longitude: lon },
-    icon,
+    type: wpType,
+    skIcon,
     existing: orig
   })
 
@@ -1234,24 +1425,39 @@ async function bulkDelete() {
   const keys = [...state.selected].filter(k => k.startsWith(state.tab + ':'))
   if (!keys.length) return
   if (!confirm(`Delete ${keys.length} selected ${state.tab}?`)) return
-  if (state.tab === 'files') {
-    const itemMap = new Map(getItemsForTab().map(it => [it.id, it]))
-    for (const k of keys) {
+  const ctrl = beginProgress(`Deleting ${keys.length} item(s)…`, { indeterminate: false })
+  try {
+    if (state.tab === 'files') {
+      const itemMap = new Map(getItemsForTab().map(it => [it.id, it]))
+      for (let i = 0; i < keys.length; i++) {
+        if (ctrl.signal.aborted) throw new Error('cancelled')
+        const k = keys[i]
+        const id = k.split(':')[1]
+        const it = itemMap.get(id)
+        if (it) await deleteResource(it, { skipConfirm: true })
+        updateProgress(((i + 1) / keys.length) * 100, `Deleting ${i + 1}/${keys.length}…`)
+      }
+      state.selected.clear()
+      await remoteList(filesState.remotePath)
+      hideProgress()
+      return
+    }
+    for (let i = 0; i < keys.length; i++) {
+      if (ctrl.signal.aborted) throw new Error('cancelled')
+      const k = keys[i]
       const id = k.split(':')[1]
-      const it = itemMap.get(id)
-      if (it) await deleteResource(it, { skipConfirm: true })
+      const it = normalizeResource(state.tab, id, state.resources[state.tab][id])
+      await deleteResource(it, { skipConfirm: true })
+      updateProgress(((i + 1) / keys.length) * 100, `Deleting ${i + 1}/${keys.length}…`)
     }
     state.selected.clear()
-    await remoteList(filesState.remotePath)
-    return
+    await refresh()
+  } catch (e) {
+    if (ctrl.signal.aborted || e.message === 'cancelled') setStatus('Bulk delete cancelled', false)
+    else setStatus(e.message || String(e), false)
+  } finally {
+    hideProgress()
   }
-  for (const k of keys) {
-    const id = k.split(':')[1]
-    const it = normalizeResource(state.tab, id, state.resources[state.tab][id])
-    await deleteResource(it, { skipConfirm: true })
-  }
-  state.selected.clear()
-  await refresh()
 }
 
 // Create waypoint at vessel position using v2 resources API.
@@ -1264,7 +1470,7 @@ async function createAtVesselPosition() {
     name,
     description: 'Created from Navigation Manager',
     position: { latitude: state.vesselPos.latitude, longitude: state.vesselPos.longitude },
-    icon: 'waypoint'
+    type: 'waypoint'
   })
   try {
     setStatus('Creating…')
@@ -1284,14 +1490,23 @@ async function doExport() {
 
   const waypoints = items.map(it => ({
     id: it.id, name: it.name, description: it.description,
-    latitude: it.position?.latitude, longitude: it.position?.longitude, icon: it.icon || ''
+    latitude: it.position?.latitude, longitude: it.position?.longitude, icon: it.icon || '', type: it.wpType || '', skIcon: it.skIcon || ''
   })).filter(w => w.latitude != null && w.longitude != null)
 
-  if (fmtSel === 'csv') downloadText('waypoints.csv', toCSV(waypoints))
-  if (fmtSel === 'gpx') downloadText('waypoints.gpx', toGPX({ waypoints }))
-  if (fmtSel === 'kml') downloadText('waypoints.kml', toKML({ waypoints }))
-  if (fmtSel === 'geojson') downloadText('waypoints.geojson', toGeoJSON({ waypoints }))
-  setStatus('Exported ✔', true)
+  const ctrl = beginProgress('Exporting…')
+  try {
+    if (ctrl.signal.aborted) throw new Error('cancelled')
+    if (fmtSel === 'csv') downloadText('waypoints.csv', toCSV(waypoints))
+    if (fmtSel === 'gpx') downloadText('waypoints.gpx', toGPX({ waypoints }))
+    if (fmtSel === 'kml') downloadText('waypoints.kml', toKML({ waypoints }))
+    if (fmtSel === 'geojson') downloadText('waypoints.geojson', toGeoJSON({ waypoints }))
+    setStatus('Exported ✔', true)
+  } catch (e) {
+    if (ctrl.signal.aborted || e.message === 'cancelled') setStatus('Export cancelled', false)
+    else setStatus(e.message || String(e), false)
+  } finally {
+    hideProgress()
+  }
 }
 
 // Import waypoints from uploaded file into server resources.
@@ -1315,20 +1530,28 @@ async function doImport() {
         name: it.name || 'Waypoint',
         description: it.description || '',
         position: { latitude: it.latitude, longitude: it.longitude },
-        icon: it.icon || 'waypoint'
+        type: it.type || 'waypoint',
+        skIcon: it.skIcon || '',
+        properties: it.properties || {}
       })
     })
     if (!creates.length) throw new Error('No importable waypoints found')
 
-    setStatus(`Importing ${creates.length} waypoint(s)…`)
-    for (const c of creates) {
-      const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(c.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) })
+    const ctrl = beginProgress(`Importing ${creates.length} waypoint(s)…`, { indeterminate: false })
+    for (let i = 0; i < creates.length; i++) {
+      if (ctrl.signal.aborted) throw new Error('cancelled')
+      const c = creates[i]
+      const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(c.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c), signal: ctrl.signal })
       if (!res.ok) throw new Error(`Create failed: ${res.status}`)
+      updateProgress(((i + 1) / creates.length) * 100, `Importing ${i + 1}/${creates.length}…`)
     }
     await refresh()
     setStatus('Imported ✔', true)
-  } catch (e) { setStatus(e.message || String(e), false) }
-  finally { $('#importFile').value = '' }
+  } catch (e) {
+    if (e.name === 'AbortError' || e.message === 'cancelled') setStatus('Import cancelled', false)
+    else setStatus(e.message || String(e), false)
+  }
+  finally { $('#importFile').value = ''; hideProgress() }
 }
 
 // Switch between tabs and rerender UI.

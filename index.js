@@ -12,6 +12,7 @@ const path = require('path')
 const fs = require('fs')
 const fsp = fs.promises
 const Busboy = require('busboy')
+const { spawn } = require('child_process')
 module.exports = function (app) {
   // Logger helper that defers to Signal K debug/error when available.
   const logError =
@@ -183,10 +184,27 @@ module.exports = function (app) {
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
           const full = safeJoin(remoteRoot, rel)
           const st = await fsp.stat(full)
-          if (!st.isFile()) return res.status(400).json({ ok: false, error: 'Not a file' })
-          res.setHeader('Content-Disposition', `attachment; filename="${path.basename(full)}"`)
-          res.setHeader('Content-Type', 'application/octet-stream')
-          fs.createReadStream(full).pipe(res)
+          if (st.isDirectory()) {
+            const base = path.basename(full) || 'directory'
+            res.setHeader('Content-Disposition', `attachment; filename="${base}.zip"`)
+            res.setHeader('Content-Type', 'application/zip')
+            const zip = spawn('zip', ['-r', '-', base], { cwd: path.dirname(full) })
+            zip.stdout.pipe(res)
+            zip.stderr.on('data', (d) => debug(`zip: ${d}`))
+            res.on('close', () => zip.kill('SIGTERM'))
+            zip.on('error', (err) => {
+              res.status(500).end(`zip error: ${err.message || err}`)
+            })
+            zip.on('close', (code) => {
+              if (code !== 0 && !res.headersSent) res.status(500).end(`zip exited ${code}`)
+            })
+          } else if (st.isFile()) {
+            res.setHeader('Content-Disposition', `attachment; filename="${path.basename(full)}"`)
+            res.setHeader('Content-Type', 'application/octet-stream')
+            fs.createReadStream(full).pipe(res)
+          } else {
+            res.status(400).json({ ok: false, error: 'Not a file or directory' })
+          }
         } catch (e) {
           res.status(400).json({ ok: false, error: e.message || String(e) })
         }
