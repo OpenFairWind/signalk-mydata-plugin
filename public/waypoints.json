@@ -1,0 +1,50 @@
+{
+  "baseUrl": "images/",
+  "icons": [
+    {
+      "id": "whale",
+      "label": "Whale",
+      "path": "waypoints/whale.svg"
+    },
+    {
+      "id": "pob",
+      "label": "Pob",
+      "path": "waypoints/pob.svg"
+    },
+    {
+      "id": "pseudoaton",
+      "label": "PseudoATON",
+      "path": "waypoints/pseudoaton.svg"
+    },
+    {
+      "id": "waypoint",
+      "label": "Waypoint",
+      "path": "waypoints/waypoint.png"
+    },
+    {
+      "id": "harbor",
+      "label": "Harbor",
+      "path": "harbor.svg"
+    },
+    {
+      "id": "marker-blue",
+      "label": "Blue Marker",
+      "path": "marker-blue.png"
+    },
+    {
+      "id": "marker-green",
+      "label": "Green Marker",
+      "path": "marker-green.png"
+    },
+    {
+      "id": "start-boat",
+      "label": "Start Boat",
+      "path": "start-boat.svg"
+    },
+    {
+      "id": "start-pin",
+      "label": "Start Pin",
+      "path": "start-pin.svg"
+    }
+  ]
+}
