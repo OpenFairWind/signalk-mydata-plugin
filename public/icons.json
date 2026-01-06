@@ -85,6 +85,21 @@
       "id": "folder",
       "label": "Folder",
       "path": "folder.svg"
+    },
+    {
+      "id": "folder-add",
+      "label": "Add Folder",
+      "path": "folder-add.svg"
+    },
+    {
+      "id": "file",
+      "label": "File",
+      "path": "file.svg"
+    },
+    {
+      "id": "file-add",
+      "label": "Add File",
+      "path": "file-add.svg"
     }
   ]
 }
