@@ -26,6 +26,7 @@ const state = {
   vesselPos: null,
   // Icon manifest fetched at boot.
   icons: null,
+  waypointsTypes: null,
   // Mapping from resource key to DOM row for incremental updates.
   rows: new Map(),
   // Detail panel state.
@@ -104,48 +105,6 @@ function genUuid() {
     const v = c === 'x' ? r : (r & 0x3) | 0x8
     return v.toString(16)
   }) + '-' + t.slice(-4)
-}
-
-// Track long-running operations with optional abort handles.
-const progress = {
-  controller: null,
-  current: null
-}
-
-// UI helpers for showing/hiding overlay progress bar.
-function showProgress(text, { indeterminate = true } = {}) {
-  const overlay = $('#progressOverlay')
-  const txt = $('#progressText')
-  const fill = $('#progressFill')
-  if (!overlay || !txt || !fill) return
-  overlay.classList.remove('hidden')
-  overlay.setAttribute('aria-busy', 'true')
-  txt.textContent = text || 'Working…'
-  fill.style.width = indeterminate ? '25%' : '0%'
-  fill.classList.toggle('progress__fill--indeterminate', indeterminate)
-}
-
-function updateProgress(percent, text) {
-  const fill = $('#progressFill')
-  const txt = $('#progressText')
-  if (!fill || !txt) return
-  if (text) txt.textContent = text
-  const pct = Math.max(0, Math.min(100, percent))
-  fill.style.width = `${pct}%`
-  fill.classList.remove('progress__fill--indeterminate')
-}
-
-function hideProgress() {
-  const overlay = $('#progressOverlay')
-  const fill = $('#progressFill')
-  if (!overlay || !fill) return
-  overlay.classList.add('hidden')
-  overlay.removeAttribute('aria-busy')
-  fill.style.width = '0%'
-  fill.classList.remove('progress__fill--indeterminate')
-  if (progress.controller?.abort) progress.controller.abort()
-  progress.controller = null
-  progress.current = null
 }
 
 // Attach cancel handler for progress overlay.
@@ -504,21 +463,30 @@ async function loadIcons() {
   // Store manifest JSON.
   state.icons = await res.json()
 
-  // Populate select elements for filter and edit dialogs.
-  for (const sel of [$('#filterIcon'), $('#editType'), $('#editIconOverride')]) {
-    sel.innerHTML = ''
-    const optAny = document.createElement('option')
-    optAny.value = ''
-    optAny.textContent = sel.id === 'filterIcon' ? 'Any' : '— choose —'
-    sel.appendChild(optAny)
-
-    for (const ic of state.icons.icons) {
-      const o = document.createElement('option')
-      o.value = ic.id
-      o.textContent = ic.label
-      sel.appendChild(o)
-    }
   }
+
+  // Load OpenBridge icon manifest and wire select options/mask images.
+  async function loadWaypointTypes() {
+    // Fetch manifest with cache busting.
+    const res = await fetch('./waypointTypes.json', { cache: 'no-cache' })
+    // Store manifest JSON.
+    state.waypointsTypes = await res.json()
+
+    // Populate select elements for filter and edit dialogs.
+    for (const sel of [$('#filterType'), $('#editType')/*, $('#editIconOverride')*/]) {
+      sel.innerHTML = ''
+      const optAny = document.createElement('option')
+      optAny.value = ''
+      optAny.textContent = sel.id === 'filterType' ? 'Any' : '— choose —'
+      sel.appendChild(optAny)
+
+      for (const ic of state.waypointsTypes.icons) {
+        const o = document.createElement('option')
+        o.value = ic.id
+        o.textContent = ic.label
+        sel.appendChild(o)
+      }
+    }
 
   // Apply mask images to static icon placeholders.
   document.querySelectorAll('.icon[data-icon]').forEach((el) => {
@@ -675,7 +643,7 @@ function applyFilters(list) {
   // Parse numeric filter for distance.
   const within = state.tab === 'files' ? NaN : parseFloat($('#filterWithinNm').value || '')
   // Icon filter selection.
-  const icon = state.tab === 'files' ? '' : ($('#filterIcon').value || '').trim()
+  const icon = state.tab === 'files' ? '' : ($('#filterType').value || '').trim()
 
   // Filter list based on conditions.
   return list.filter(it => {
@@ -1183,7 +1151,7 @@ function render() {
 
   // Toggle filter fields that are navigation-specific.
   const withinField = $('#filterWithinNm')?.closest('.field')
-  const iconField = $('#filterIcon')?.closest('.field')
+  const iconField = $('#filterType')?.closest('.field')
   if (withinField) setHidden(withinField, isFiles)
   if (iconField) setHidden(iconField, isFiles)
 
@@ -1593,7 +1561,7 @@ function wire() {
   $('#btnRefresh').addEventListener('click', () => { state.selected.clear(); refresh(); if (state.tab === 'files') remoteList(filesState.remotePath) })
   $('#btnPagePrev').addEventListener('click', () => { state.page[state.tab] = Math.max(1, (state.page[state.tab] || 1) - 1); render() })
   $('#btnPageNext').addEventListener('click', () => { state.page[state.tab] = (state.page[state.tab] || 1) + 1; render() })
-  ;['filterText','filterWithinNm','filterIcon','sortBy','sortOrder'].forEach(id => {
+  ;['filterText','filterWithinNm','filterType','sortBy','sortOrder'].forEach(id => {
     $(`#${id}`).addEventListener('input', () => { state.page[state.tab] = 1; render() })
     $(`#${id}`).addEventListener('change', () => { state.page[state.tab] = 1; render() })
   })
@@ -1667,6 +1635,7 @@ function connectWS(isRetry=false) {
 // Boot sequence: load icons, wire events, refresh data, load files, and connect to websocket.
 async function boot() {
   await loadIcons()
+  await loadWaypointTypes()
   wire()
   await refresh()
   try { await remoteList('') } catch {}
