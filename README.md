@@ -8,11 +8,10 @@ A **Signal K Node Server** plugin that provides a lightweight webapp to browse a
 
 Features:
 - Waypoint **distance / bearing** (computed from `vessels.self.navigation.position`)
-- **GoTo** (publishes `navigation.courseRhumbline.nextPoint.*` with href per Signal K spec)
-- **Show on map** (publishes best-effort GeoJSON `plugins.nav-manager.selectedFeature`)
+- **GoTo**
 - **Edit** & **Delete** waypoints
 - Advanced **sorting** and **filtering**
-- Waypoint icon selection (OpenBridge icons)
+- Waypoint icon selection 
 - Files area for browsing a configurable server-side root:
   - create folders, upload/download files, inline previews for text and common binary MIME types (images, audio, video, PDF)
   - server-side creation, editing, renaming, and deletion with text + image editors
