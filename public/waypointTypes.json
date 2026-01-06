@@ -1,0 +1,40 @@
+{
+  "baseUrl": "images/",
+  "icons": [
+    {
+      "id": "whale",
+      "label": "Whale",
+      "path": "whale.svg"
+    },
+    {
+      "id": "pob",
+      "label": "Pob",
+      "path": "pob.svg"
+    },
+    {
+      "id": "pseudoaton",
+      "label": "PseudoATON",
+      "path": "pseudoaton.svg"
+    },
+    {
+      "id": "waypoint",
+      "label": "Waypoint",
+      "path": "waypoint.svg"
+    },
+    {
+      "id": "harbor",
+      "label": "Harbor",
+      "path": "harbor.svg"
+    },
+    {
+      "id": "anchor",
+      "label": "Anchor",
+      "path": "anchor.svg"
+    },
+    {
+      "id": "danger",
+      "label": "Danger",
+      "path": "warning.svg"
+    }
+  ]
+}
