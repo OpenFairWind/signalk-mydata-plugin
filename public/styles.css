@@ -160,6 +160,64 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
 .editorhost{min-height:260px; border:1px dashed var(--line); border-radius:10px; padding:8px; background:rgba(0,0,0,0.15);}
 .editor__text{width:100%; height:100%; background:#0a1325; color:var(--text); border:1px solid var(--line); border-radius: 8px; padding:10px;}
 
+.progress{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.5);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:120;
+  padding:16px;
+}
+.progress__card{
+  width:min(420px, 92vw);
+  background:#0b1220;
+  border:1px solid var(--line);
+  border-radius:16px;
+  box-shadow: var(--shadow);
+  padding:14px 16px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.progress__text{font-weight:700; font-size:14px;}
+.progress__bar{width:100%; height:10px; border-radius:999px; background:rgba(110,231,255,.12); overflow:hidden; border:1px solid var(--line);}
+.progress__fill{height:100%; width:0%; background:linear-gradient(90deg, #6ee7ff, #7c3aed); transition:width .15s ease;}
+.progress__fill--indeterminate{animation: progressPulse 1.2s ease-in-out infinite;}
+.progress__actions{display:flex; justify-content:flex-end;}
+
+@keyframes progressPulse {
+  0% { transform: translateX(-30%); }
+  50% { transform: translateX(30%); }
+  100% { transform: translateX(-30%); }
+}
+.progress{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.5);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:120;
+  padding:16px;
+}
+.progress__card{
+  width:min(420px, 92vw);
+  background:#0b1220;
+  border:1px solid var(--line);
+  border-radius:16px;
+  box-shadow: var(--shadow);
+  padding:14px 16px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.progress__text{font-weight:700; font-size:14px;}
+.progress__bar{width:100%; height:10px; border-radius:999px; background:rgba(110,231,255,.12); overflow:hidden; border:1px solid var(--line);}
+.progress__fill{height:100%; width:0%; background:linear-gradient(90deg, #6ee7ff, #7c3aed); transition:width .15s ease;}
+.progress__actions{display:flex; justify-content:flex-end;}
+
 @media (max-width: 980px) {
   .layout { height: auto; min-height: 100vh; }
   .content { height: auto; overflow:auto; }

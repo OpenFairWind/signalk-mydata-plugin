@@ -206,31 +206,36 @@
     <div class="dialog__title">Edit</div>
     <div class="dialog__body">
       <div class="grid2">
-        <label class="field">
-          <span>Name</span>
-          <input id="editName" type="text" />
-        </label>
-        <label class="field">
-          <span>Icon</span>
-          <select id="editIcon"></select>
-        </label>
-      </div>
+      <label class="field">
+        <span>Name</span>
+        <input id="editName" type="text" />
+      </label>
+      <label class="field">
+        <span>Type</span>
+        <select id="editType"></select>
+      </label>
+    </div>
 
-      <div class="grid2">
-        <label class="field">
+    <div class="grid2">
+      <label class="field">
           <span>Latitude</span>
           <input id="editLat" type="number" step="0.000001" />
         </label>
         <label class="field">
-          <span>Longitude</span>
-          <input id="editLon" type="number" step="0.000001" />
-        </label>
-      </div>
-
-      <label class="field">
-        <span>Description</span>
-        <textarea id="editDesc" rows="3"></textarea>
+        <span>Longitude</span>
+        <input id="editLon" type="number" step="0.000001" />
       </label>
+    </div>
+
+    <label class="field">
+      <span>Icon override</span>
+      <select id="editIconOverride"></select>
+    </label>
+
+    <label class="field">
+      <span>Description</span>
+      <textarea id="editDesc" rows="3"></textarea>
+    </label>
     </div>
     <div class="dialog__actions">
       <button class="btn btn--ghost">Cancel</button>
@@ -238,6 +243,18 @@
     </div>
   </form>
 </dialog>
+
+<div id="progressOverlay" class="progress hidden" role="status" aria-live="polite">
+  <div class="progress__card">
+    <div class="progress__text" id="progressText">Working…</div>
+    <div class="progress__bar" id="progressBar">
+      <div class="progress__fill" id="progressFill"></div>
+    </div>
+    <div class="progress__actions">
+      <button class="btn btn--tiny" id="btnCancelProgress"><span class="icon" data-icon="close"></span> Cancel</button>
+    </div>
+  </div>
+</div>
 
 <script type="module" src="./app.js"></script>
 </body>

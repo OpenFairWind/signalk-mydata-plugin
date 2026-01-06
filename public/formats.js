@@ -198,10 +198,15 @@ export function parseGeoJSON(text) {
   for (const f of feats) {
     if (!f || f.type !== 'Feature' || !f.geometry) continue // Skip invalid features.
     const g = f.geometry // Geometry reference.
-    const p = f.properties || {} // Properties map.
-    const name = toText(pickFirst(p.name, p.title, f.name, f.id, 'Waypoint'), 'Waypoint') // Preferred name.
-    const description = toText(pickFirst(p.description, p.desc, p.note, f.description, ''), '') // Preferred description.
-    const kindProp = (p.kind || p.type || '').toString().toLowerCase() // Explicit kind property.
+    const p = { ...(f.properties || {}) } // Properties map.
+    const nameProp = p.name ?? p.title ?? f.name ?? f.id ?? 'Waypoint'
+    const descProp = p.description ?? p.desc ?? p.note ?? f.description ?? ''
+    const name = toText(nameProp, 'Waypoint') // Preferred name.
+    const description = toText(descProp, '') // Preferred description.
+    const typeProp = p.type
+    const skIcon = p.skIcon || p.skicon || ''
+    delete p.name; delete p.description; delete p.type
+    const kindProp = (p.kind || typeProp || '').toString().toLowerCase() // Explicit kind property.
     const kindFromGeom = g.type === 'Point' ? 'waypoint' : (g.type === 'LineString' || g.type === 'MultiLineString') ? 'track' : '' // Infer kind.
     const kind = (kindProp === 'route' || kindProp === 'track' || kindProp === 'waypoint') ? kindProp : kindFromGeom // Decide kind.
 
@@ -216,6 +221,9 @@ export function parseGeoJSON(text) {
         description,
         latitude: lat,
         longitude: lon,
+        type: typeProp || '',
+        skIcon: skIcon || '',
+        properties: p,
         icon: (p.icon || p.sym || '')?.toString() || ''
       }) // Push waypoint.
     } else if (g.type === 'LineString') {
@@ -244,6 +252,8 @@ export function toGeoJSON({ waypoints = [], routes = [], tracks = [] }) {
         id: w.id || null,
         name: w.name || 'Waypoint',
         description: w.description || '',
+        type: w.type || '',
+        skIcon: w.skIcon || '',
         icon: w.icon || ''
       }
     })
