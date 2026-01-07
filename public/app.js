@@ -482,7 +482,7 @@ async function loadWaypointTypes() {
   state.waypointsTypes = await res.json()
 
   // Populate select elements for filter and edit dialogs.
-  for (const sel of [$('#filterType'), $('#editType')/*, $('#editIconOverride')*/]) {
+  for (const sel of [$('#filterType'), $('#editType')]) {
     sel.innerHTML = ''
     const optAny = document.createElement('option')
     optAny.value = ''
@@ -1150,7 +1150,7 @@ function renderTableHead() {
   } else {
     headRow.innerHTML = `
       <th style="width:40px"><input type="checkbox" id="selectAllHeader" /></th>
-      <th>Icon</th>
+      <th>Type</th>
       <th>Name</th>
       <th class="num" style="text-align:right">Dist (NM)</th>
       <th class="num" style="text-align:right">Brg (°)</th>
@@ -1379,7 +1379,7 @@ async function saveWaypoint() {
   })
 
   try {
-    setStatus('Saving…')
+    setStatus('Saving...')
     const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
