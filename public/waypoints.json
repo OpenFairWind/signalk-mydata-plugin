@@ -22,11 +22,6 @@
       "path": "waypoints/waypoint.png"
     },
     {
-      "id": "harbor",
-      "label": "Harbor",
-      "path": "harbor.svg"
-    },
-    {
       "id": "marker-blue",
       "label": "Blue Marker",
       "path": "marker-blue.png"
