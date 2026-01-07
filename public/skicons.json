@@ -1,0 +1,250 @@
+{
+  "baseUrl": "images/",
+  "icons": [
+    {
+      "id": "real-south",
+      "label": "Real South",
+      "path": "atons/real-south.svg"
+    },
+    {
+      "id": "virtual-danger",
+      "label": "Virtual Danger",
+      "path": "atons/virtual-danger.svg"
+    },
+    {
+      "id": "real-danger",
+      "label": "Real Danger",
+      "path": "atons/real-danger.svg"
+    },
+    {
+      "id": "basestation",
+      "label": "Base Station",
+      "path": "atons/basestation.svg"
+    },
+    {
+      "id": "virtual-safe",
+      "label": "Virtual Safe",
+      "path": "atons/virtual-safe.svg"
+    },
+    {
+      "id": "folder-create-svgrepo-com",
+      "label": "Folder Create",
+      "path": "atons/folder-create-svgrepo-com.svg"
+    },
+    {
+      "id": "real-special",
+      "label": "Real Special",
+      "path": "atons/real-special.svg"
+    },
+    {
+      "id": "virtual-north",
+      "label": "Virtual North",
+      "path": "atons/virtual-north.svg"
+    },
+    {
+      "id": "real-east",
+      "label": "Real East",
+      "path": "atons/real-east.svg"
+    },
+    {
+      "id": "real-safe",
+      "label": "Real Safe",
+      "path": "atons/real-safe.svg"
+    },
+    {
+      "id": "virtual-west",
+      "label": "Virtual West",
+      "path": "atons/virtual-west.svg"
+    },
+    {
+      "id": "virtual-port",
+      "label": "Virtual Port",
+      "path": "atons/virtual-port.svg"
+    },
+    {
+      "id": "virtual-south",
+      "label": "Virtual South",
+      "path": "atons/virtual-south.svg"
+    },
+    {
+      "id": "real-west",
+      "label": "Real West",
+      "path": "atons/real-west.svg"
+    },
+    {
+      "id": "real-port",
+      "label": "Real Port",
+      "path": "atons/real-port.svg"
+    },
+    {
+      "id": "virtual-aton",
+      "label": "Virtual AtoN",
+      "path": "atons/virtual-aton.svg"
+    },
+    {
+      "id": "virtual-east",
+      "label": "Virtual East",
+      "path": "atons/virtual-east.svg"
+    },
+    {
+      "id": "virtual-special",
+      "label": "Virtual Special",
+      "path": "atons/virtual-special.svg"
+    },
+    {
+      "id": "real-north",
+      "label": "Real North",
+      "path": "atons/real-north.svg"
+    },
+    {
+      "id": "real-starboard",
+      "label": "Real Starboard",
+      "path": "atons/real-starboard.svg"
+    },
+    {
+      "id": "real-aton",
+      "label": "Real AtoN",
+      "path": "atons/real-aton.svg"
+    },
+    {
+      "id": "virtual-starboard",
+      "label": "Virtual Starboard",
+      "path": "atons/virtual-starboard.svg"
+    },
+    {
+      "id": "fuel",
+      "label": "Fuel",
+      "path": "poi/fuel.svg"
+    },
+    {
+      "id": "turning-basin",
+      "label": "Turning Basin",
+      "path": "poi/turning-basin.svg"
+    },
+    {
+      "id": "anchorage",
+      "label": "Anchorage",
+      "path": "poi/anchorage.svg"
+    },
+    {
+      "id": "navigation-structure",
+      "label": "Navigation Structure",
+      "path": "poi/navigation-structure.svg"
+    },
+    {
+      "id": "dam",
+      "label": "Dam",
+      "path": "poi/dam.svg"
+    },
+    {
+      "id": "waterway-guage",
+      "label": "Waterway Gauge",
+      "path": "poi/waterway-guage.svg"
+    },
+    {
+      "id": "boatramp",
+      "label": "Boat Ramp",
+      "path": "poi/boatramp.svg"
+    },
+    {
+      "id": "dock",
+      "label": "Dock",
+      "path": "poi/dock.svg"
+    },
+    {
+      "id": "hazard",
+      "label": "Hazard",
+      "path": "poi/hazard.svg"
+    },
+    {
+      "id": "ferry",
+      "label": "Ferry",
+      "path": "poi/ferry.svg"
+    },
+    {
+      "id": "business",
+      "label": "Business",
+      "path": "poi/business.svg"
+    },
+    {
+      "id": "notice-to-mariners",
+      "label": "Notice to Mariners",
+      "path": "poi/notice-to-mariners.svg"
+    },
+    {
+      "id": "inlet",
+      "label": "Inlet",
+      "path": "poi/inlet.svg"
+    },
+    {
+      "id": "lock",
+      "label": "Lock",
+      "path": "poi/lock.svg"
+    },
+    {
+      "id": "radio-call-point",
+      "label": "Radio Call Point",
+      "path": "poi/radio-call-point.svg"
+    },
+    {
+      "id": "tunnel",
+      "label": "Tunnel",
+      "path": "poi/tunnel.svg"
+    },
+    {
+      "id": "bridge",
+      "label": "Bridge",
+      "path": "poi/bridge.svg"
+    },
+    {
+      "id": "transhipment-dock",
+      "label": "Transhipment Dock",
+      "path": "poi/transhipment-dock.svg"
+    },
+    {
+      "id": "marina",
+      "label": "Marina",
+      "path": "poi/marina.svg"
+    },
+    {
+      "id": "waypoint",
+      "label": "Waypoint",
+      "path": "waypoints/waypoint.png"
+    },
+    {
+      "id": "marker-green",
+      "label": "Green Marker",
+      "path": "waypoints/marker-green.png"
+    },
+    {
+      "id": "start-pin",
+      "label": "Start Pin",
+      "path": "waypoints/start-pin.svg"
+    },
+    {
+      "id": "marker-blue",
+      "label": "Blue Marker",
+      "path": "waypoints/marker-blue.png"
+    },
+    {
+      "id": "pob",
+      "label": "POB",
+      "path": "waypoints/pob.svg"
+    },
+    {
+      "id": "start-boat",
+      "label": "Start Boat",
+      "path": "waypoints/start-boat.svg"
+    },
+    {
+      "id": "pseudoaton",
+      "label": "Pseudo AtoN",
+      "path": "waypoints/pseudoaton.svg"
+    },
+    {
+      "id": "whale",
+      "label": "Whale",
+      "path": "waypoints/whale.svg"
+    }
+  ]
+}
