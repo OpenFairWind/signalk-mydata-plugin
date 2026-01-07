@@ -851,11 +851,99 @@ function buildIconSelect(selected = '') {
   return sel
 }
 
+// Render a tree view for nested property objects.
+function renderTreeView(obj) {
+  const host = document.createElement('div')
+  host.className = 'treeview'
+
+  const header = document.createElement('div')
+  header.className = 'treeview__row treeview__header'
+  header.innerHTML = '<div>Key</div><div>Type</div><div>Value</div>'
+  host.appendChild(header)
+
+  const root = document.createElement('div')
+  root.className = 'treeview__root'
+  host.appendChild(root)
+
+  const renderValuePreview = (value) => {
+    if (value === null) return 'null'
+    if (Array.isArray(value)) return `Array(${value.length})`
+    if (typeof value === 'object') return 'Object'
+    if (typeof value === 'string') return `"${value}"`
+    return String(value)
+  }
+
+  const renderTypeLabel = (value) => {
+    if (value === null) return 'null'
+    if (Array.isArray(value)) return 'array'
+    return typeof value
+  }
+
+  const renderRow = (key, value) => {
+    const row = document.createElement('div')
+    row.className = 'treeview__row'
+    const keyNode = document.createElement('div')
+    keyNode.className = 'treeview__key'
+    keyNode.textContent = key
+    const typeNode = document.createElement('div')
+    typeNode.className = 'treeview__type'
+    typeNode.textContent = renderTypeLabel(value)
+    const valueNode = document.createElement('div')
+    valueNode.className = 'treeview__value'
+    valueNode.textContent = renderValuePreview(value)
+    row.appendChild(keyNode)
+    row.appendChild(typeNode)
+    row.appendChild(valueNode)
+    return row
+  }
+
+  const renderNode = (key, value) => {
+    if (value && typeof value === 'object') {
+      const entries = Array.isArray(value) ? value.map((v, i) => [String(i), v]) : Object.entries(value)
+      const details = document.createElement('details')
+      details.className = 'treeview__node'
+      const summary = document.createElement('summary')
+      summary.appendChild(renderRow(key, value))
+      details.appendChild(summary)
+      const children = document.createElement('div')
+      children.className = 'treeview__children'
+      if (!entries.length) {
+        const emptyRow = document.createElement('div')
+        emptyRow.className = 'treeview__row treeview__empty'
+        emptyRow.innerHTML = '<div>(empty)</div><div>—</div><div>—</div>'
+        children.appendChild(emptyRow)
+      } else {
+        for (const [childKey, childValue] of entries) {
+          children.appendChild(renderNode(childKey, childValue))
+        }
+      }
+      details.appendChild(children)
+      return details
+    }
+    return renderRow(key, value)
+  }
+
+  const entries = obj && typeof obj === 'object' ? Object.entries(obj) : []
+  if (!entries.length) {
+    const emptyRow = document.createElement('div')
+    emptyRow.className = 'treeview__row treeview__empty'
+    emptyRow.innerHTML = '<div>(empty)</div><div>—</div><div>—</div>'
+    root.appendChild(emptyRow)
+  } else {
+    for (const [key, value] of entries) {
+      root.appendChild(renderNode(key, value))
+    }
+  }
+
+  return host
+}
+
 // Render the waypoint detail view.
 function renderWaypointDetail(it, editMode) {
   const table = document.createElement('table')
   table.className = 'proptable'
   const raw = state.resources.waypoints?.[it.id] || it.raw || {}
+  const p = raw.properties || raw.feature?.properties || {}
 
   const nameField = editMode ? (() => {
     const inp = document.createElement('input')
@@ -926,6 +1014,7 @@ function renderWaypointDetail(it, editMode) {
   table.appendChild(propRow('Type', typeField))
   table.appendChild(propRow('Icon override', iconOverrideField))
   table.appendChild(propRow('Icon', iconField))
+  table.appendChild(propRow('Properties', renderTreeView(p)))
   return table
 }
 

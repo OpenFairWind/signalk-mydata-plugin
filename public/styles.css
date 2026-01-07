@@ -149,6 +149,15 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
 .proptable{width:100%; border-collapse:collapse; margin-bottom:12px;}
 .proptable th{width:180px; text-align:left; color:var(--muted); font-size:12px; padding:6px 8px; vertical-align:top;}
 .proptable td{padding:6px 8px; border-bottom:1px solid var(--line);}
+.treeview{display:flex; flex-direction:column; gap:6px; font-size:12px;}
+.treeview__row{display:grid; grid-template-columns:minmax(120px, 0.35fr) minmax(80px, 0.2fr) minmax(140px, 1fr); gap:8px; align-items:center;}
+.treeview__header{color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-size:10px;}
+.treeview__node{margin-left:10px; border-left:1px dashed var(--line); padding-left:8px;}
+.treeview__node > summary{cursor:pointer; list-style:none;}
+.treeview__node > summary::-webkit-details-marker{display:none;}
+.treeview__children{display:flex; flex-direction:column; gap:4px; margin-top:4px;}
+.treeview__empty{color:var(--muted);}
+.treeview__value{word-break:break-word;}
 .icon-display{display:inline-flex; align-items:center; gap:10px;}
 .icon-display__label{color:var(--muted); font-size:13px;}
 .coords-row{display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:center;}
