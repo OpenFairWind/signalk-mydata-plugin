@@ -24,22 +24,22 @@
     {
       "id": "marker-blue",
       "label": "Blue Marker",
-      "path": "marker-blue.png"
+      "path": "waypoints/marker-blue.png"
     },
     {
       "id": "marker-green",
       "label": "Green Marker",
-      "path": "marker-green.png"
+      "path": "waypoints/marker-green.png"
     },
     {
       "id": "start-boat",
       "label": "Start Boat",
-      "path": "start-boat.svg"
+      "path": "waypoints/start-boat.svg"
     },
     {
       "id": "start-pin",
       "label": "Start Pin",
-      "path": "start-pin.svg"
+      "path": "waypoints/start-pin.svg"
     }
   ]
 }
