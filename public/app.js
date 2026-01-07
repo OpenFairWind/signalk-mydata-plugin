@@ -463,31 +463,6 @@ async function loadIcons() {
   // Store manifest JSON.
   state.icons = await res.json()
 
-  }
-
-  // Load OpenBridge icon manifest and wire select options/mask images.
-  async function loadWaypointTypes() {
-    // Fetch manifest with cache busting.
-    const res = await fetch('./waypoints.json', { cache: 'no-cache' })
-    // Store manifest JSON.
-    state.waypointsTypes = await res.json()
-
-    // Populate select elements for filter and edit dialogs.
-    for (const sel of [$('#filterType'), $('#editType')/*, $('#editIconOverride')*/]) {
-      sel.innerHTML = ''
-      const optAny = document.createElement('option')
-      optAny.value = ''
-      optAny.textContent = sel.id === 'filterType' ? 'Any' : '— choose —'
-      sel.appendChild(optAny)
-
-      for (const ic of state.waypointsTypes.icons) {
-        const o = document.createElement('option')
-        o.value = ic.id
-        o.textContent = ic.label
-        sel.appendChild(o)
-      }
-    }
-
   // Apply mask images to static icon placeholders.
   document.querySelectorAll('.icon[data-icon]').forEach((el) => {
     const id = el.getAttribute('data-icon')
@@ -497,6 +472,30 @@ async function loadIcons() {
     el.style.webkitMaskImage = `url(${url})`
     el.style.maskImage = `url(${url})`
   })
+}
+
+// Load waypoint type manifest used for dropdowns and defaults.
+async function loadWaypointTypes() {
+  // Fetch manifest with cache busting.
+  const res = await fetch('./waypoints.json', { cache: 'no-cache' })
+  // Store manifest JSON.
+  state.waypointsTypes = await res.json()
+
+  // Populate select elements for filter and edit dialogs.
+  for (const sel of [$('#filterType'), $('#editType')/*, $('#editIconOverride')*/]) {
+    sel.innerHTML = ''
+    const optAny = document.createElement('option')
+    optAny.value = ''
+    optAny.textContent = sel.id === 'filterType' ? 'Any' : '— choose —'
+    sel.appendChild(optAny)
+
+    for (const ic of state.waypointsTypes.icons) {
+      const o = document.createElement('option')
+      o.value = ic.id
+      o.textContent = ic.label
+      sel.appendChild(o)
+    }
+  }
 }
 
 // Fetch resources of the given type and cache them.
@@ -533,10 +532,22 @@ function normalizeResource(type, id, obj) {
   return item
 }
 
+// Return available icon catalogs (UI + waypoint type lists).
+function iconCatalogs() {
+  return [state.waypointsTypes, state.icons].filter(Boolean)
+}
+
+// Find a specific icon in the provided catalog and include base URL metadata.
+function findIconInCatalog(catalog, iconId) {
+  if (!iconId || !catalog?.icons) return null
+  const ic = catalog.icons.find(x => x.id === iconId)
+  return ic ? { ...ic, baseUrl: catalog.baseUrl || '' } : null
+}
+
 // Map waypoint type to preferred icon id.
 function iconForType(type) {
   if (!type) return null
-  const exists = state.icons?.icons?.some(ic => ic.id === type)
+  const exists = getIconMeta(type)
   return exists ? type : null
 }
 
@@ -707,7 +718,11 @@ function computePageSize(tab) {
 // Find icon metadata by id.
 function getIconMeta(iconId) {
   if (!iconId) return null
-  return (state.icons?.icons || []).find(x => x.id === iconId) || null
+  for (const catalog of iconCatalogs()) {
+    const match = findIconInCatalog(catalog, iconId)
+    if (match) return match
+  }
+  return null
 }
 
 // Render an icon cell using loaded manifest.
@@ -723,8 +738,9 @@ function renderIconCell(iconId, { fallbackId = 'waypoint' } = {}) {
   if (!ic) { wrap.textContent = '—'; wrap.classList.add('muted'); return wrap }
   // Build image element.
   const img = document.createElement('img')
-  img.src = state.icons.baseUrl + ic.path
-  img.alt = ic.label
+  const base = ic.baseUrl || state.icons?.baseUrl || ''
+  img.src = base + ic.path
+  img.alt = ic.label || resolvedId
   img.style.filter = 'invert(1)'
   wrap.appendChild(img)
   return wrap
@@ -735,8 +751,8 @@ function renderIconDisplay(iconId) {
   const wrap = document.createElement('div')
   wrap.className = 'icon-display'
   const ic = getIconMeta(iconId)
-  const fallback = ic ? null : getIconMeta('waypoint')
-  wrap.appendChild(renderIconCell(iconId, { fallbackId: 'waypoint' }))
+  const fallback = ic ? ic : getIconMeta('waypoint')
+  wrap.appendChild(renderIconCell(iconId, { fallbackId: fallback?.id || 'waypoint' }))
   const label = document.createElement('span')
   label.className = 'icon-display__label'
   label.textContent = ic?.label || iconId || fallback?.label || '—'
@@ -757,9 +773,9 @@ function btnTiny(iconId, label, onClick) {
   // Attach click handler.
   b.addEventListener('click', onClick)
   // Locate icon metadata for mask application.
-  const ic = state.icons.icons.find(x => x.id === iconId)
+  const ic = getIconMeta(iconId)
   if (ic) {
-    const url = state.icons.baseUrl + ic.path
+    const url = (ic.baseUrl || state.icons?.baseUrl || '') + ic.path
     const el = b.querySelector('.icon')
     el.style.webkitMaskImage = `url(${url})`
     el.style.maskImage = `url(${url})`
@@ -820,12 +836,17 @@ function buildIconSelect(selected = '') {
   blank.value = ''
   blank.textContent = '— choose —'
   sel.appendChild(blank)
-  for (const ic of state.icons?.icons || []) {
-    const o = document.createElement('option')
-    o.value = ic.id
-    o.textContent = ic.label
-    if (ic.id === selected) o.selected = true
-    sel.appendChild(o)
+  const seen = new Set()
+  for (const catalog of iconCatalogs()) {
+    for (const ic of catalog.icons || []) {
+      if (seen.has(ic.id)) continue
+      seen.add(ic.id)
+      const o = document.createElement('option')
+      o.value = ic.id
+      o.textContent = ic.label
+      if (ic.id === selected) o.selected = true
+      sel.appendChild(o)
+    }
   }
   return sel
 }
