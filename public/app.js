@@ -27,6 +27,7 @@ const state = {
   // Icon manifest fetched at boot.
   icons: null,
   waypointsTypes: null,
+  skIcons: null,
   // Mapping from resource key to DOM row for incremental updates.
   rows: new Map(),
   // Detail panel state.
@@ -154,7 +155,8 @@ async function ensureTiny(selector = '#detailTextEditor') {
     selector,
     menubar: false,
     toolbar: 'undo redo | bold italic underline | bullist numlist | alignleft aligncenter alignright | removeformat',
-    height: 320,
+    height: '100%',
+    min_height: 320,
     skin: 'oxide-dark',
     content_css: 'dark'
   })
@@ -272,6 +274,61 @@ function renderCrumbs() {
   return p ? `/ ${p}` : '/ (root)'
 }
 
+const TEXT_FILE_TYPES = {
+  text: {
+    label: 'Plain text',
+    ext: 'txt',
+    mime: 'text/plain',
+    skeleton: ''
+  },
+  html: {
+    label: 'HTML',
+    ext: 'html',
+    mime: 'text/html',
+    skeleton: '<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  <title>New Document</title>\n</head>\n<body>\n  <h1>Hello</h1>\n</body>\n</html>\n'
+  },
+  json: {
+    label: 'JSON',
+    ext: 'json',
+    mime: 'application/json',
+    skeleton: '{\n  \"name\": \"New Document\"\n}\n'
+  },
+  xml: {
+    label: 'XML',
+    ext: 'xml',
+    mime: 'application/xml',
+    skeleton: '<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<root>\n  <item>New Document</item>\n</root>\n'
+  },
+  md: {
+    label: 'MD',
+    ext: 'md',
+    mime: 'text/markdown',
+    skeleton: '# New Document\n\nStart writing here.\n'
+  }
+}
+
+function fileSizeFromText(text) {
+  if (!text) return 0
+  if (window.TextEncoder) return new TextEncoder().encode(text).length
+  return text.length
+}
+
+function buildFileMeta(item, preview) {
+  if (preview?.meta) return preview.meta
+  const mime = preview?.mime || (item?.fileType === 'dir' ? 'directory' : 'text/plain')
+  const size = preview?.size ?? item?.size ?? fileSizeFromText(preview?.text || '')
+  const parts = [item?.id || '', mime, size ? humanSize(size) : '0 B'].filter(Boolean)
+  return parts.join(' • ')
+}
+
+function isTextPreview(preview, editMode, isNew) {
+  return preview?.kind === 'text' || editMode || isNew
+}
+
+function isBinaryPreview(preview) {
+  return preview?.kind === 'binary' && preview.data && isPreviewableMime(preview.mime)
+}
+
 // Render the remote file list with selection support.
 // Helper to build a relative path with the current directory prefix.
 function buildRelPath(name) {
@@ -359,6 +416,47 @@ async function remoteUpload(files) {
   } finally {
     hideProgress()
   }
+}
+
+function defaultFileNameForType(typeKey) {
+  const type = TEXT_FILE_TYPES[typeKey] || TEXT_FILE_TYPES.text
+  return `new-file.${type.ext}`
+}
+
+function ensureFileExtension(name, typeKey) {
+  const type = TEXT_FILE_TYPES[typeKey] || TEXT_FILE_TYPES.text
+  const base = name.trim()
+  if (!base) return defaultFileNameForType(typeKey)
+  const last = base.split('/').pop() || base
+  if (last.includes('.')) return base
+  return `${base}.${type.ext}`
+}
+
+async function openNewFileDialog() {
+  const dlg = $('#dlgNewFile')
+  const nameField = $('#newFileName')
+  const typeField = $('#newFileType')
+  if (!dlg || !nameField || !typeField) return
+  nameField.value = defaultFileNameForType(typeField.value || 'text')
+  dlg.showModal()
+}
+
+async function createNewTextFile() {
+  const nameField = $('#newFileName')
+  const typeField = $('#newFileType')
+  if (!nameField || !typeField) return
+  const typeKey = typeField.value || 'text'
+  const type = TEXT_FILE_TYPES[typeKey] || TEXT_FILE_TYPES.text
+  const rel = buildRelPath(ensureFileExtension(nameField.value, typeKey))
+  const preview = {
+    kind: 'text',
+    text: type.skeleton,
+    mime: type.mime,
+    size: fileSizeFromText(type.skeleton),
+    meta: `${rel} • ${type.mime} • ${humanSize(fileSizeFromText(type.skeleton))}`
+  }
+  const item = { type: 'files', id: rel, name: rel.split('/').pop(), fileType: 'file', size: preview.size, modified: null, description: '', raw: { name: rel.split('/').pop(), type: 'file' } }
+  await openDetail(item, { edit: true, isNew: true, preview })
 }
 
 // Create or overwrite a text file on the server.
@@ -474,6 +572,29 @@ async function loadIcons() {
   })
 }
 
+// Load Signal K icon manifest used for icon overrides.
+async function loadSkIcons() {
+  // Fetch manifest with cache busting.
+  const res = await fetch('./skicons.json', { cache: 'no-cache' })
+  // Store manifest JSON.
+  state.skIcons = await res.json()
+
+  const sel = $('#editIconOverride')
+  if (sel) {
+    sel.innerHTML = ''
+    const blank = document.createElement('option')
+    blank.value = ''
+    blank.textContent = '— none —'
+    sel.appendChild(blank)
+    for (const ic of state.skIcons.icons) {
+      const o = document.createElement('option')
+      o.value = ic.id
+      o.textContent = ic.label
+      sel.appendChild(o)
+    }
+  }
+}
+
 // Load waypoint type manifest used for dropdowns and defaults.
 async function loadWaypointTypes() {
   // Fetch manifest with cache busting.
@@ -534,7 +655,7 @@ function normalizeResource(type, id, obj) {
 
 // Return available icon catalogs (UI + waypoint type lists).
 function iconCatalogs() {
-  return [state.waypointsTypes, state.icons].filter(Boolean)
+  return [state.waypointsTypes, state.skIcons, state.icons].filter(Boolean)
 }
 
 // Find a specific icon in the provided catalog and include base URL metadata.
@@ -830,25 +951,28 @@ function propRow(label, valueNode) {
 }
 
 // Build a select element for icons.
-function buildIconSelect(selected = '') {
+function buildSelectFromCatalog(catalog, selected = '', blankLabel = '— choose —') {
   const sel = document.createElement('select')
   const blank = document.createElement('option')
   blank.value = ''
-  blank.textContent = '— choose —'
+  blank.textContent = blankLabel
   sel.appendChild(blank)
-  const seen = new Set()
-  for (const catalog of iconCatalogs()) {
-    for (const ic of catalog.icons || []) {
-      if (seen.has(ic.id)) continue
-      seen.add(ic.id)
-      const o = document.createElement('option')
-      o.value = ic.id
-      o.textContent = ic.label
-      if (ic.id === selected) o.selected = true
-      sel.appendChild(o)
-    }
+  for (const ic of catalog?.icons || []) {
+    const o = document.createElement('option')
+    o.value = ic.id
+    o.textContent = ic.label
+    if (ic.id === selected) o.selected = true
+    sel.appendChild(o)
   }
   return sel
+}
+
+function buildTypeSelect(selected = '') {
+  return buildSelectFromCatalog(state.waypointsTypes, selected, '— choose —')
+}
+
+function buildSkIconSelect(selected = '') {
+  return buildSelectFromCatalog(state.skIcons, selected, '— none —')
 }
 
 // Render a tree view for nested property objects.
@@ -938,6 +1062,69 @@ function renderTreeView(obj) {
   return host
 }
 
+function renderListItems(items) {
+  const wrap = document.createElement('div')
+  wrap.className = 'detail-list'
+  if (!items || (Array.isArray(items) && !items.length)) {
+    wrap.textContent = '—'
+    wrap.classList.add('muted')
+    return wrap
+  }
+  const list = Array.isArray(items) ? items : [items]
+  for (const item of list) {
+    const row = document.createElement('div')
+    row.className = 'detail-list__row'
+    if (item && typeof item === 'object') {
+      const parts = []
+      if (item.name) parts.push(item.name)
+      if (item.type) parts.push(item.type)
+      if (item.phone) parts.push(item.phone)
+      if (item.email) parts.push(item.email)
+      if (item.href) parts.push(item.href)
+      row.textContent = parts.length ? parts.join(' • ') : JSON.stringify(item)
+    } else {
+      row.textContent = String(item)
+    }
+    wrap.appendChild(row)
+  }
+  return wrap
+}
+
+function iconForSeafloorKind(kind) {
+  if (!kind) return null
+  const icons = state.skIcons?.icons || []
+  if (!icons.length) return null
+  const label = typeof kind === 'string' ? kind : String(kind)
+  const hash = [...label].reduce((acc, ch) => (acc + ch.charCodeAt(0)) % icons.length, 0)
+  return icons[hash]?.id || null
+}
+
+function renderSeafloorKind(kind) {
+  if (!kind) return document.createTextNode('—')
+  const wrap = document.createElement('div')
+  wrap.className = 'icon-display'
+  const labelText = typeof kind === 'string' ? kind : String(kind)
+  const iconId = iconForSeafloorKind(labelText)
+  wrap.appendChild(renderIconCell(iconId, { fallbackId: 'waypoint' }))
+  const label = document.createElement('span')
+  label.className = 'icon-display__label'
+  label.textContent = labelText
+  wrap.appendChild(label)
+  return wrap
+}
+
+function formatDepth(value) {
+  if (value == null) return '—'
+  if (typeof value === 'object') {
+    const v = value.value ?? value.depth ?? value.meters ?? value.minimum ?? value.maximum
+    const unit = value.unit || value.units || 'm'
+    if (v == null) return '—'
+    return `${v} ${unit}`
+  }
+  if (Number.isFinite(value)) return `${value} m`
+  return String(value)
+}
+
 // Render the waypoint detail view.
 function renderWaypointDetail(it, editMode) {
   const table = document.createElement('table')
@@ -996,14 +1183,14 @@ function renderWaypointDetail(it, editMode) {
   const typeVal = raw.properties?.type || raw.feature?.properties?.type || it.wpType || ''
   const skIconVal = raw.properties?.skIcon || raw.feature?.properties?.skIcon || it.skIcon || ''
   const iconId = it.icon || raw.properties?.icon || raw.feature?.properties?.icon || ''
-  const iconField = editMode ? buildIconSelect(skIconVal) : renderIconDisplay(iconId || skIconVal || typeVal)
+  const iconField = editMode ? renderIconDisplay(skIconVal || iconId || typeVal) : renderIconDisplay(iconId || skIconVal || typeVal)
   const typeField = editMode ? (() => {
-    const sel = buildIconSelect(typeVal)
+    const sel = buildTypeSelect(typeVal)
     sel.id = 'detailEditType'
     return sel
   })() : document.createTextNode(typeVal || '—')
   const iconOverrideField = editMode ? (() => {
-    const sel = buildIconSelect(skIconVal)
+    const sel = buildSkIconSelect(skIconVal)
     sel.id = 'detailEditIconOverride'
     return sel
   })() : document.createTextNode(skIconVal || '—')
@@ -1014,6 +1201,12 @@ function renderWaypointDetail(it, editMode) {
   table.appendChild(propRow('Type', typeField))
   table.appendChild(propRow('Icon override', iconOverrideField))
   table.appendChild(propRow('Icon', iconField))
+  table.appendChild(propRow('Contacts', renderListItems(p.contacts)))
+  table.appendChild(propRow('Slips', renderListItems(p.slips)))
+  const seafloor = p.seafloor || {}
+  table.appendChild(propRow('Seafloor kind', renderSeafloorKind(seafloor.kind)))
+  table.appendChild(propRow('Seafloor min depth', document.createTextNode(formatDepth(seafloor.minimumDepth ?? seafloor.minimum ?? seafloor.minDepth))))
+  table.appendChild(propRow('Seafloor max depth', document.createTextNode(formatDepth(seafloor.maximumDepth ?? seafloor.maximum ?? seafloor.maxDepth))))
   table.appendChild(propRow('Properties', renderTreeView(p)))
   return table
 }
@@ -1029,26 +1222,18 @@ function renderRouteDetail(it) {
 }
 
 // Render the file detail view, including previews/editors.
-async function renderFileDetail(it, preview, editMode, isNew) {
+async function renderFileDetail(it, preview, editMode, isNew, { fullView = false } = {}) {
   const frag = document.createDocumentFragment()
-  const table = document.createElement('table')
-  table.className = 'proptable'
-  table.appendChild(propRow('Path', document.createTextNode(it.id)))
-  table.appendChild(propRow('Type', document.createTextNode(it.fileType)))
-  if (preview?.mime) table.appendChild(propRow('MIME', document.createTextNode(preview.mime)))
-  if (it.fileType === 'file' && it.size != null) table.appendChild(propRow('Size', document.createTextNode(humanSize(it.size))))
-  if (it.modified) table.appendChild(propRow('Modified', document.createTextNode(new Date(it.modified).toLocaleString())))
-  frag.appendChild(table)
-
-  const pathField = document.createElement('input')
-  pathField.type = 'text'
-  pathField.id = 'detailFilePath'
-  pathField.value = it.id
-  pathField.className = 'textfield'
-  const saveTable = document.createElement('table')
-  saveTable.className = 'proptable'
-  saveTable.appendChild(propRow('Save as', pathField))
-  frag.appendChild(saveTable)
+  if (!fullView) {
+    const table = document.createElement('table')
+    table.className = 'proptable'
+    table.appendChild(propRow('Path', document.createTextNode(it.id)))
+    table.appendChild(propRow('Type', document.createTextNode(it.fileType)))
+    if (preview?.mime) table.appendChild(propRow('MIME', document.createTextNode(preview.mime)))
+    if (it.fileType === 'file' && it.size != null) table.appendChild(propRow('Size', document.createTextNode(humanSize(it.size))))
+    if (it.modified) table.appendChild(propRow('Modified', document.createTextNode(new Date(it.modified).toLocaleString())))
+    frag.appendChild(table)
+  }
 
   if (preview?.error) {
     const p = document.createElement('p')
@@ -1065,7 +1250,16 @@ async function renderFileDetail(it, preview, editMode, isNew) {
     return { node: frag, saveable: false }
   }
 
-  if (preview?.kind === 'text' || editMode || isNew) {
+  if (isTextPreview(preview, editMode, isNew)) {
+    const pathField = document.createElement('input')
+    pathField.type = 'text'
+    pathField.id = 'detailFilePath'
+    pathField.value = it.id
+    pathField.className = 'textfield'
+    const saveTable = document.createElement('table')
+    saveTable.className = `proptable${fullView ? ' proptable--compact' : ''}`
+    saveTable.appendChild(propRow('Save as', pathField))
+    frag.appendChild(saveTable)
     const host = document.createElement('div')
     host.className = 'editorhost'
     const ta = document.createElement('textarea')
@@ -1077,7 +1271,7 @@ async function renderFileDetail(it, preview, editMode, isNew) {
     return { node: frag, saveable: true }
   }
 
-  if (preview?.kind === 'binary' && preview.data && isPreviewableMime(preview.mime)) {
+  if (isBinaryPreview(preview)) {
     frag.appendChild(previewBinary(preview.mime, preview.data))
     return { node: frag, saveable: false }
   }
@@ -1098,13 +1292,16 @@ async function renderDetail() {
   panel.classList.add('detail--open')
   const { item, preview, edit, isNew } = state.detail
   $('#detailTitle').textContent = `${item.type.slice(0, -1).toUpperCase()}: ${item.name}`
-  $('#detailMeta').textContent = item.type === 'files' ? (preview?.meta || renderCrumbs()) : ``
+  const metaNode = $('#detailMeta')
+  if (item.type === 'files') metaNode.textContent = buildFileMeta(item, preview)
+  else metaNode.textContent = ''
   const actions = $('#detailActions')
   const body = $('#detailBody')
   actions.innerHTML = ''
   body.innerHTML = ''
   let saveable = false
   saveBtn.classList.add('hidden')
+  body.classList.remove('detail__body--full')
 
   if (item.type === 'waypoints') {
     actions.appendChild(btnTiny('goto', 'Go to', () => gotoWaypoint(item)))
@@ -1137,7 +1334,9 @@ async function renderDetail() {
       }))
     }
     actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
-    const fileDetail = await renderFileDetail(item, preview, edit, isNew)
+    const fullView = isTextPreview(preview, edit, isNew) || isBinaryPreview(preview)
+    if (fullView) body.classList.add('detail__body--full')
+    const fileDetail = await renderFileDetail(item, preview, edit, isNew, { fullView })
     saveable = fileDetail.saveable
     body.appendChild(fileDetail.node)
   }
@@ -1151,7 +1350,9 @@ async function openDetail(it, opts = {}) {
   filesState.tinyEditor = null
   state.detail = { item: it, preview: null, edit: !!opts.edit, isNew: !!opts.isNew }
   try {
-    if (it.type === 'files') {
+    if (opts.preview) {
+      state.detail.preview = opts.preview
+    } else if (it.type === 'files') {
       filesState.selectedRemote = it.id
       if (opts.isNew) {
         state.detail.preview = { kind: 'text', text: '' }
@@ -1685,7 +1886,12 @@ function wire() {
   $('#btnRemoteUp')?.addEventListener('click', remoteUp)
   $('#btnRemoteMkdir')?.addEventListener('click', remoteMkdir)
   $('#remoteUpload')?.addEventListener('change', (e) => remoteUpload(e.target.files))
-  $('#btnOpenTextNew')?.addEventListener('click', () => openDetail({ type: 'files', id: buildRelPath('new-file.txt'), name: 'new-file.txt', fileType: 'file', size: 0, modified: null, description: '', raw: { name: 'new-file.txt', type: 'file' } }, { edit: true, isNew: true }))
+  $('#btnOpenTextNew')?.addEventListener('click', openNewFileDialog)
+  $('#doCreateFile')?.addEventListener('click', async (e) => {
+    e.preventDefault()
+    await createNewTextFile()
+    $('#dlgNewFile')?.close()
+  })
   $('#btnCloseDetail')?.addEventListener('click', closeDetail)
   $('#btnSaveDetail')?.addEventListener('click', saveDetail)
 
@@ -1745,6 +1951,7 @@ function connectWS(isRetry=false) {
 // Boot sequence: load icons, wire events, refresh data, load files, and connect to websocket.
 async function boot() {
   await loadIcons()
+  await loadSkIcons()
   await loadWaypointTypes()
   wire()
   await refresh()

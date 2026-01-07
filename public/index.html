@@ -201,6 +201,32 @@
   </form>
 </dialog>
 
+<dialog id="dlgNewFile">
+  <form method="dialog" class="dialog">
+    <div class="dialog__title">New text file</div>
+    <div class="dialog__body">
+      <label class="field">
+        <span>Name</span>
+        <input id="newFileName" type="text" />
+      </label>
+      <label class="field">
+        <span>Type</span>
+        <select id="newFileType">
+          <option value="text">Plain text</option>
+          <option value="html">HTML</option>
+          <option value="json">JSON</option>
+          <option value="xml">XML</option>
+          <option value="md">MD</option>
+        </select>
+      </label>
+    </div>
+    <div class="dialog__actions">
+      <button class="btn btn--ghost">Cancel</button>
+      <button class="btn" id="doCreateFile" value="ok"><span class="icon" data-icon="file-add"></span> Create</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="dlgEdit">
   <form method="dialog" class="dialog dialog--wide">
     <div class="dialog__title">Edit</div>

@@ -145,8 +145,11 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
 .detail__title{font-size:18px; font-weight:800;}
 .detail__actions{display:flex; gap:8px; flex-wrap:wrap;}
 .detail__body{flex:1; overflow:auto; border:1px solid var(--line); border-radius:12px; padding:12px; background:rgba(0,0,0,0.2);}
+.detail__body--full{padding:0; display:flex; flex-direction:column;}
 .detail__footer{display:flex; justify-content:flex-end; gap:10px;}
 .proptable{width:100%; border-collapse:collapse; margin-bottom:12px;}
+.proptable--compact{margin-bottom:8px;}
+.proptable--compact th{width:140px;}
 .proptable th{width:180px; text-align:left; color:var(--muted); font-size:12px; padding:6px 8px; vertical-align:top;}
 .proptable td{padding:6px 8px; border-bottom:1px solid var(--line);}
 .treeview{display:flex; flex-direction:column; gap:6px; font-size:12px;}
@@ -163,11 +166,16 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
 .coords-row{display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:center;}
 .coords-row .muted{font-size:12px;}
 .detail__info{font-size:12px; color:var(--muted);}
+.detail-list{display:flex; flex-direction:column; gap:6px;}
+.detail-list__row{padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:rgba(0,0,0,0.25);}
 .textfield{width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#0a1325; color:var(--text);}
 .preview__media { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .preview__frame { width: 100%; height: 100%; border: none; background: #0b1220; min-height: 320px; }
 .editorhost{min-height:260px; border:1px dashed var(--line); border-radius:10px; padding:8px; background:rgba(0,0,0,0.15);}
 .editor__text{width:100%; height:100%; background:#0a1325; color:var(--text); border:1px solid var(--line); border-radius: 8px; padding:10px;}
+.detail__body--full .editorhost{flex:1; min-height:100%; border:none; border-radius:0; padding:0;}
+.detail__body--full .editor__text{border:none; border-radius:0;}
+.detail__body--full .preview__binary{flex:1; display:flex; align-items:center; justify-content:center; padding:12px;}
 
 .progress{
   position:fixed;
