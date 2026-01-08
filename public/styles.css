@@ -160,6 +160,13 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
 .proptable--compact th{width:140px;}
 .proptable th{width:180px; text-align:left; color:var(--muted); font-size:12px; padding:6px 8px; vertical-align:top;}
 .proptable td{padding:6px 8px; border-bottom:1px solid var(--line);}
+.detail-metrics{display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px;}
+.detail-metric{display:flex; flex-direction:column; gap:2px;}
+.detail-metric .muted{font-size:12px;}
+.prop-group{display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start;}
+.prop-group--three{display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px;}
+.prop-group__item{display:flex; flex-direction:column; gap:4px;}
+.prop-group__label{font-size:12px;}
 .treeview{display:flex; flex-direction:column; gap:6px; font-size:12px;}
 .treeview__row{display:grid; grid-template-columns:minmax(120px, 0.35fr) minmax(80px, 0.2fr) minmax(140px, 1fr); gap:8px; align-items:center;}
 .treeview__header{color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-size:10px;}
