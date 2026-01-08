@@ -7,6 +7,8 @@ const $ = (sel) => document.querySelector(sel)
 const PLUGIN_ID = 'signalk-mydata-plugin'
 // Base path for plugin-relative API endpoints.
 const API_BASE = `/plugins/${PLUGIN_ID}`
+// Endpoint for Signal K login status.
+const LOGIN_STATUS_ENDPOINT = '/skServer/loginStatus'
 
 // Global application state for resources, selection, vessel position, and icons.
 const state = {
@@ -96,6 +98,24 @@ let liveSocket = null
 let liveSocketMonitor = null
 // Helper to build fully qualified Signal K v2 resource endpoints.
 const RES_ENDPOINT = (type) => `/signalk/v2/api/resources/${type}`
+
+// Verify write access before attempting server mutations.
+async function ensureWriteAccess() {
+  try {
+    const res = await fetch(LOGIN_STATUS_ENDPOINT, { cache: 'no-cache' })
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(`Login status failed: ${res.status}`)
+    if (j.readOnlyAccess) {
+      alert('Read-only access detected. Please log in to make changes.')
+      setStatus('Read-only access: log in to make changes.', false)
+      return false
+    }
+    return true
+  } catch (e) {
+    setStatus(e.message || String(e), false)
+    return false
+  }
+}
 
 // Generate a UUID for resource identifiers with Date fallback.
 function genUuid() {
@@ -377,6 +397,7 @@ async function remoteMkdir() {
   const name = prompt('New folder name:')
   // Abort when cancelled or empty.
   if (!name) return
+  if (!await ensureWriteAccess()) return
   // Compose relative path for creation.
   const rel = buildRelPath(name)
   // Issue mkdir request.
@@ -393,6 +414,7 @@ async function remoteMkdir() {
 async function remoteUpload(files) {
   // Ignore when nothing selected.
   if (!files || !files.length) return
+  if (!await ensureWriteAccess()) return
   const ctrl = beginProgress('Uploading files…')
   // Prepare multipart form data.
   const fd = new FormData()
@@ -461,6 +483,7 @@ async function createNewTextFile() {
 
 // Create or overwrite a text file on the server.
 async function remoteSaveText(pathRel, text) {
+  if (!await ensureWriteAccess()) return false
   // Issue write request with utf8 encoding.
   const res = await fetch(`${API_BASE}/files/write`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, content: text, encoding: 'utf8' }) })
   // Parse response JSON for ok flag.
@@ -501,6 +524,7 @@ async function remoteDownload(pathRel) {
 
 // Rename a remote file by supplying new path.
 async function remoteRename(pathRel, newName) {
+  if (!await ensureWriteAccess()) return false
   // Compute new relative path in current directory.
   const newRel = buildRelPath(newName)
   // Perform rename via dedicated endpoint.
@@ -519,6 +543,7 @@ async function remoteRename(pathRel, newName) {
 async function remoteMove(pathRel) {
   const dest = prompt('Move to path (relative to root):', pathRel)
   if (!dest || dest === pathRel) return null
+  if (!await ensureWriteAccess()) return null
   const res = await fetch(`${API_BASE}/files/rename`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, newPath: dest }) })
   const j = await res.json().catch(() => ({}))
   if (!res.ok || !j.ok) { setStatus(j.error || `Move failed: ${res.status}`, false); return null }
@@ -531,6 +556,7 @@ async function remoteMove(pathRel) {
 async function remoteDelete(pathRel, confirmDelete = true) {
   // Prompt user for confirmation.
   if (confirmDelete && !confirm(`Delete remote file "${pathRel}"?`)) return false
+  if (!await ensureWriteAccess()) return false
   // Send delete request.
   const res = await fetch(`${API_BASE}/files/delete`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel }) })
   // Parse JSON reply.
@@ -1379,6 +1405,7 @@ async function saveDetail() {
   const { item } = state.detail
   if (!item) return
   if (item.type === 'waypoints') {
+    if (!await ensureWriteAccess()) return
     const name = $('#detailEditName')?.value?.trim()
     const description = $('#detailEditDesc')?.value?.trim()
     const lat = parseFloat($('#detailEditLat')?.value)
@@ -1654,6 +1681,7 @@ async function saveWaypoint() {
   const wpType = $('#editType').value.trim()
   const skIcon = $('#editIconOverride').value.trim()
   if (!id || !name || Number.isNaN(lat) || Number.isNaN(lon)) { setStatus('Missing name/position', false); return }
+  if (!await ensureWriteAccess()) return
 
   const orig = state.resources.waypoints[id]
   if (!orig) { setStatus('Waypoint not found in cache', false); return }
@@ -1682,9 +1710,10 @@ async function saveWaypoint() {
 }
 
 // Delete a single resource after confirmation.
-async function deleteResource(it, { skipConfirm = false } = {}) {
+async function deleteResource(it, { skipConfirm = false, skipAccessCheck = false } = {}) {
   try {
     if (!skipConfirm && !confirm(`Delete ${it.type.slice(0,-1)} "${it.name}"?`)) return
+    if (!skipAccessCheck && !await ensureWriteAccess()) return
     setStatus('Deleting…')
     if (it.type === 'files') {
       const ok = await remoteDelete(it.id, false)
@@ -1704,6 +1733,7 @@ async function bulkDelete() {
   const keys = [...state.selected].filter(k => k.startsWith(state.tab + ':'))
   if (!keys.length) return
   if (!confirm(`Delete ${keys.length} selected ${state.tab}?`)) return
+  if (!await ensureWriteAccess()) return
   const ctrl = beginProgress(`Deleting ${keys.length} item(s)…`, { indeterminate: false })
   try {
     if (state.tab === 'files') {
@@ -1713,7 +1743,7 @@ async function bulkDelete() {
         const k = keys[i]
         const id = k.split(':')[1]
         const it = itemMap.get(id)
-        if (it) await deleteResource(it, { skipConfirm: true })
+        if (it) await deleteResource(it, { skipConfirm: true, skipAccessCheck: true })
         updateProgress(((i + 1) / keys.length) * 100, `Deleting ${i + 1}/${keys.length}…`)
       }
       state.selected.clear()
@@ -1726,7 +1756,7 @@ async function bulkDelete() {
       const k = keys[i]
       const id = k.split(':')[1]
       const it = normalizeResource(state.tab, id, state.resources[state.tab][id])
-      await deleteResource(it, { skipConfirm: true })
+      await deleteResource(it, { skipConfirm: true, skipAccessCheck: true })
       updateProgress(((i + 1) / keys.length) * 100, `Deleting ${i + 1}/${keys.length}…`)
     }
     state.selected.clear()
@@ -1742,6 +1772,7 @@ async function bulkDelete() {
 // Create waypoint at vessel position using v2 resources API.
 async function createAtVesselPosition() {
   if (!state.vesselPos) { setStatus('No vessel position available', false); return }
+  if (!await ensureWriteAccess()) return
   const name = `WP ${new Date().toISOString().slice(11,19)}`
   const id = genUuid()
   const wp = buildWaypointPayload({
@@ -1794,6 +1825,7 @@ async function doImport() {
   const f = $('#importFile').files?.[0]
   if (!f) { setStatus('Select a file', false); return }
   const text = await f.text()
+  if (!await ensureWriteAccess()) return
 
   try {
     let items = []
