@@ -105,7 +105,7 @@ async function ensureWriteAccess() {
     const res = await fetch(LOGIN_STATUS_ENDPOINT, { cache: 'no-cache' })
     const j = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(`Login status failed: ${res.status}`)
-    if (j.readOnlyAccess) {
+    if (j.status === "notLoggedIn" || j.userLevel === "readonly" ) {
       alert('Read-only access detected. Please log in to make changes.')
       setStatus('Read-only access: log in to make changes.', false)
       return false
@@ -393,11 +393,17 @@ async function remoteUp() {
 
 // Prompt for a new folder name and create it remotely.
 async function remoteMkdir() {
+
+  // Ensure write access
+  if (!await ensureWriteAccess()) return
+
   // Ask the user for a folder name.
   const name = prompt('New folder name:')
   // Abort when cancelled or empty.
   if (!name) return
-  if (!await ensureWriteAccess()) return
+
+
+
   // Compose relative path for creation.
   const rel = buildRelPath(name)
   // Issue mkdir request.
@@ -412,9 +418,13 @@ async function remoteMkdir() {
 
 // Upload one or more files directly into the current remote directory.
 async function remoteUpload(files) {
+
+  // Ensure write access
+  if (!await ensureWriteAccess()) return
+
   // Ignore when nothing selected.
   if (!files || !files.length) return
-  if (!await ensureWriteAccess()) return
+
   const ctrl = beginProgress('Uploading files…')
   // Prepare multipart form data.
   const fd = new FormData()
@@ -541,9 +551,13 @@ async function remoteRename(pathRel, newName) {
 
 // Move a remote file to an arbitrary path.
 async function remoteMove(pathRel) {
+
+  // Ensure write access
+  if (!await ensureWriteAccess()) return null
+
   const dest = prompt('Move to path (relative to root):', pathRel)
   if (!dest || dest === pathRel) return null
-  if (!await ensureWriteAccess()) return null
+
   const res = await fetch(`${API_BASE}/files/rename`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, newPath: dest }) })
   const j = await res.json().catch(() => ({}))
   if (!res.ok || !j.ok) { setStatus(j.error || `Move failed: ${res.status}`, false); return null }
@@ -554,9 +568,13 @@ async function remoteMove(pathRel) {
 
 // Delete a remote file using server endpoint.
 async function remoteDelete(pathRel, confirmDelete = true) {
+
+  // Ensure write access
+  if (!await ensureWriteAccess()) return false
+
   // Prompt user for confirmation.
   if (confirmDelete && !confirm(`Delete remote file "${pathRel}"?`)) return false
-  if (!await ensureWriteAccess()) return false
+
   // Send delete request.
   const res = await fetch(`${API_BASE}/files/delete`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel }) })
   // Parse JSON reply.
@@ -1402,10 +1420,13 @@ async function openDetail(it, opts = {}) {
 
 // Persist edits performed in the detail overlay.
 async function saveDetail() {
+  // Ensure write access
+  if (!await ensureWriteAccess()) return
+
   const { item } = state.detail
   if (!item) return
   if (item.type === 'waypoints') {
-    if (!await ensureWriteAccess()) return
+
     const name = $('#detailEditName')?.value?.trim()
     const description = $('#detailEditDesc')?.value?.trim()
     const lat = parseFloat($('#detailEditLat')?.value)
@@ -1632,6 +1653,9 @@ async function refresh() {
 
 // Send goto command via plugin API.
 async function gotoWaypoint(it) {
+  // Ensure write access
+  if (!await ensureWriteAccess()) return
+
   try {
     setStatus('Setting goto…')
     const res = await fetch(API_BASE+'/goto', {
@@ -1673,6 +1697,10 @@ async function editWaypoint(it) {
 
 // Persist waypoint changes back to the server.
 async function saveWaypoint() {
+
+  // Ensure write access
+  if (!await ensureWriteAccess()) return
+
   const id = $('#dlgEdit').dataset.id
   const name = $('#editName').value.trim()
   const description = $('#editDesc').value.trim()
@@ -1681,7 +1709,6 @@ async function saveWaypoint() {
   const wpType = $('#editType').value.trim()
   const skIcon = $('#editIconOverride').value.trim()
   if (!id || !name || Number.isNaN(lat) || Number.isNaN(lon)) { setStatus('Missing name/position', false); return }
-  if (!await ensureWriteAccess()) return
 
   const orig = state.resources.waypoints[id]
   if (!orig) { setStatus('Waypoint not found in cache', false); return }
@@ -1711,10 +1738,13 @@ async function saveWaypoint() {
 
 // Delete a single resource after confirmation.
 async function deleteResource(it, { skipConfirm = false, skipAccessCheck = false } = {}) {
+  // Ensure write access
+  if (!skipAccessCheck && !await ensureWriteAccess()) return
+
   try {
     if (!skipConfirm && !confirm(`Delete ${it.type.slice(0,-1)} "${it.name}"?`)) return
-    if (!skipAccessCheck && !await ensureWriteAccess()) return
-    setStatus('Deleting…')
+    //
+    setStatus('Deleting...')
     if (it.type === 'files') {
       const ok = await remoteDelete(it.id, false)
       if (ok) { closeDetail(); setStatus('Deleted ✔', true) }
@@ -1730,10 +1760,14 @@ async function deleteResource(it, { skipConfirm = false, skipAccessCheck = false
 
 // Bulk delete currently selected items for the active tab.
 async function bulkDelete() {
+
+  // Ensure write access
+  if (!await ensureWriteAccess()) return
+
   const keys = [...state.selected].filter(k => k.startsWith(state.tab + ':'))
   if (!keys.length) return
   if (!confirm(`Delete ${keys.length} selected ${state.tab}?`)) return
-  if (!await ensureWriteAccess()) return
+
   const ctrl = beginProgress(`Deleting ${keys.length} item(s)…`, { indeterminate: false })
   try {
     if (state.tab === 'files') {
@@ -1771,8 +1805,12 @@ async function bulkDelete() {
 
 // Create waypoint at vessel position using v2 resources API.
 async function createAtVesselPosition() {
-  if (!state.vesselPos) { setStatus('No vessel position available', false); return }
+
+  // Ensure write access
   if (!await ensureWriteAccess()) return
+
+  if (!state.vesselPos) { setStatus('No vessel position available', false); return }
+
   const name = `WP ${new Date().toISOString().slice(11,19)}`
   const id = genUuid()
   const wp = buildWaypointPayload({
@@ -1821,11 +1859,15 @@ async function doExport() {
 
 // Import waypoints from uploaded file into server resources.
 async function doImport() {
+
+  // Ensure write access
+  if (!await ensureWriteAccess()) return
+
   const fmtSel = $('#importFormat').value
   const f = $('#importFile').files?.[0]
   if (!f) { setStatus('Select a file', false); return }
   const text = await f.text()
-  if (!await ensureWriteAccess()) return
+
 
   try {
     let items = []
