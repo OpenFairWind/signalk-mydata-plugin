@@ -38,19 +38,13 @@ module.exports = function (app) {
 
   // JSON schema for configuration shown in the Signal K UI.
   plugin.schema = () => ({
-    title: 'Manage my data',
+    title: 'MyData',
     type: 'object',
     properties: {
-      remoteFileRoot: {
-        type: 'string',
-        title: 'Remote files root directory',
-        description: 'Files panel browses/uploads/downloads files under this server-side directory. Use an absolute path. Path traversal is blocked.',
-        default: '/var/lib/signalk/mydata-files'
-      },
-      additionalFileRoots: {
+      remoteFileRoots: {
         type: 'array',
-        title: 'Additional file root directories',
-        description: 'Optional extra root folders for the Files tab. Each entry needs a label and an absolute path.',
+        title: 'Remote files root directories',
+        description: 'Files panel browses/uploads/downloads files under this server-side directory. Use an absolute path. Path traversal is blocked.',
         items: {
           type: 'object',
           properties: {
