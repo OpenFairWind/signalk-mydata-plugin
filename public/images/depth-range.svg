@@ -1,0 +1,16 @@
+<!-- depthRange.svg  (keys: seaFloor.minDepth, seaFloor.maxDepth) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+     fill="none" stroke="#ffffff" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+     role="img" aria-label="Depth range">
+    <!-- surface (wave) -->
+    <path d="M3 6c2-1.5 4-1.5 6 0s4 1.5 6 0 4-1.5 6 0"/>
+    <!-- depth bracket -->
+    <path d="M6 9v10"/>
+    <path d="M6 9h3"/>
+    <path d="M6 19h3"/>
+    <!-- down arrow -->
+    <path d="M12 10v9"/>
+    <path d="M10.5 17.5L12 19l1.5-1.5"/>
+    <!-- tick marks -->
+    <path d="M6 13h2M6 16h2"/>
+</svg>

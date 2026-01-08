@@ -1,0 +1,12 @@
+<!-- mud.svg  (key: seaFloor.type.mud) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+     fill="none" stroke="#ffffff" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+     role="img" aria-label="Mud">
+    <!-- ground line -->
+    <path d="M3 16h18"/>
+    <!-- puddle / mud blobs -->
+    <path d="M6.5 16c0-1.6 1.2-3 2.7-3 1 0 1.8.5 2.3 1.2.4-.7 1.2-1.2 2.2-1.2 1.6 0 2.8 1.4 2.8 3"/>
+    <path d="M8 19c.8-1 2.1-1.7 3.6-1.7S14.4 18 15 19"/>
+    <!-- splatter dots -->
+    <path d="M5 13.5h0.01M18.8 13.2h0.01M16.2 11.5h0.01"/>
+</svg>

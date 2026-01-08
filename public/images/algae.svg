@@ -1,0 +1,14 @@
+<!-- algae.svg  (key: seaFloor.type.algae) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+     fill="none" stroke="#ffffff" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+     role="img" aria-label="Algae">
+    <!-- stems -->
+    <path d="M8 20c0-5 2-7 2-11 0-2.5-1.4-3.7-3-5"/>
+    <path d="M12 20c0-6 0-8 0-12 0-2.2 1.2-3.8 3-5"/>
+    <path d="M16 20c0-5-2-7-2-11 0-2.5 1.4-3.7 3-5"/>
+    <!-- leaves -->
+    <path d="M9.5 11.5c-1.2 0-2.3-.7-3.1-1.7"/>
+    <path d="M14.5 12c1.2 0 2.3-.7 3.1-1.7"/>
+    <path d="M11 8.8c-1 .1-1.9-.3-2.6-1.1"/>
+    <path d="M13 8.8c1 .1 1.9-.3 2.6-1.1"/>
+</svg>
