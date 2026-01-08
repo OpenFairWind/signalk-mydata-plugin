@@ -1890,7 +1890,7 @@ async function doImport() {
     })
     if (!creates.length) throw new Error('No importable waypoints found')
 
-    const ctrl = beginProgress(`Importing ${creates.length} waypoint(s)…`, { indeterminate: false })
+    const ctrl = beginProgress(`Importing ${creates.length} waypoint(s)...`, { indeterminate: false })
     for (let i = 0; i < creates.length; i++) {
       if (ctrl.signal.aborted) throw new Error('cancelled')
       const c = creates[i]
