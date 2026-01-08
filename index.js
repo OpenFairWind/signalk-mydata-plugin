@@ -83,26 +83,32 @@ module.exports = function (app) {
         items: {
           type: 'object',
           properties: {
-            path: { type: 'string', title: 'Property path (dot notation)' },
-            paths: {
-              type: 'array',
-              title: 'Grouped property paths (dot notation)',
-              description: 'Render multiple properties on a single line in the waypoint detail view.',
-              items: { type: 'string' }
-            },
-            label: { type: 'string', title: 'Label' },
-            labels: {
-              type: 'array',
-              title: 'Grouped labels',
-              description: 'Optional labels aligned with grouped paths.',
-              items: { type: 'string' }
-            },
-            mode: {
+            label: { type: 'string', title: 'Group label (optional)' },
+            layout: {
               type: 'string',
-              title: 'Render mode',
-              enum: ['tree', 'single-line', 'text', 'number', 'icon', 'icon-text', 'array', 'three-view'],
-              enumNames: ['Tree view', 'Single line', 'Text', 'Number', 'Icon', 'Icon with text', 'Array', 'Three view'],
-              default: 'single-line'
+              title: 'Group layout',
+              enum: ['stack', 'three-view'],
+              enumNames: ['Stacked', 'Three view'],
+              default: 'stack'
+            },
+            properties: {
+              type: 'array',
+              title: 'Property list',
+              description: 'Each property defines its own path, label, and render mode.',
+              items: {
+                type: 'object',
+                properties: {
+                  property: { type: 'string', title: 'Property path (dot notation)' },
+                  label: { type: 'string', title: 'Label' },
+                  mode: {
+                    type: 'string',
+                    title: 'Render mode',
+                    enum: ['tree', 'single-line', 'text', 'number', 'icon', 'icon-text', 'array'],
+                    enumNames: ['Tree view', 'Single line', 'Text', 'Number', 'Icon', 'Icon with text', 'Array'],
+                    default: 'single-line'
+                  }
+                }
+              }
             }
           }
         },
@@ -124,19 +130,28 @@ module.exports = function (app) {
 
   // Start hook invoked by Signal K when enabling the plugin.
   plugin.start = function (options) {
-    // Resolve configured remote file root (with default).
+    // Resolve configured remote file roots (empty disables file panel).
+    const configuredRoots = Array.isArray(options?.remoteFileRoots) ? options.remoteFileRoots : null
     const remoteRoot = (options && options.remoteFileRoot) ? options.remoteFileRoot : '/var/lib/signalk/mydata-files'
     const extraRoots = (options && Array.isArray(options.additionalFileRoots)) ? options.additionalFileRoots : []
-    const fileRoots = [
-      { id: 'default', label: 'Default', path: remoteRoot },
-      ...extraRoots
+    const fileRoots = Array.isArray(configuredRoots)
+      ? configuredRoots
         .filter(root => root && root.path)
         .map((root, idx) => ({
-          id: `extra-${idx + 1}`,
+          id: root.id || `root-${idx + 1}`,
           label: root.label || root.path,
           path: root.path
         }))
-    ]
+      : [
+        { id: 'default', label: 'Default', path: remoteRoot },
+        ...extraRoots
+          .filter(root => root && root.path)
+          .map((root, idx) => ({
+            id: `extra-${idx + 1}`,
+            label: root.label || root.path,
+            path: root.path
+          }))
+      ]
 
     // Router registration used by Signal K to mount HTTP handlers.
     plugin.registerWithRouter = (router) => {
@@ -183,6 +198,7 @@ module.exports = function (app) {
       }
 
       function resolveRoot(rootId) {
+        if (!fileRoots.length) return null
         if (!rootId) return fileRoots[0]
         return fileRoots.find(root => root.id === rootId) || fileRoots[0]
       }
@@ -207,6 +223,7 @@ module.exports = function (app) {
         try {
           const rel = req.query.path || ''
           const root = resolveRoot(req.query.root)
+          if (!root) return res.status(400).json({ ok: false, error: 'Files panel disabled (no file roots configured).' })
           const dir = safeJoin(root.path, rel)
           await ensureDir(dir)
           const entries = []
@@ -241,6 +258,7 @@ module.exports = function (app) {
           const rel = req.query.path
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
           const root = resolveRoot(req.query.root)
+          if (!root) return res.status(400).json({ ok: false, error: 'Files panel disabled (no file roots configured).' })
           const full = safeJoin(root.path, rel)
           const st = await fsp.stat(full)
           if (!st.isFile()) return res.status(400).json({ ok: false, error: 'Not a file' })
@@ -275,6 +293,7 @@ module.exports = function (app) {
           const rel = req.query.path
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
           const root = resolveRoot(req.query.root)
+          if (!root) return res.status(400).json({ ok: false, error: 'Files panel disabled (no file roots configured).' })
           const full = safeJoin(root.path, rel)
           const st = await fsp.stat(full)
           if (st.isDirectory()) {
@@ -309,6 +328,7 @@ module.exports = function (app) {
           const rel = req.body && req.body.path
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
           const root = resolveRoot(req.body?.root)
+          if (!root) return res.status(400).json({ ok: false, error: 'Files panel disabled (no file roots configured).' })
           const full = safeJoin(root.path, rel)
           await ensureDir(full)
           res.json({ ok: true })
@@ -322,6 +342,7 @@ module.exports = function (app) {
         const bb = Busboy({ headers: req.headers, limits: { fileSize: 50 * 1024 * 1024 } })
         let dirRel = ''
         let saved = []
+        let uploadError = null
 
         bb.on('field', (name, val) => {
           if (name === 'dir') dirRel = val || ''
@@ -332,6 +353,11 @@ module.exports = function (app) {
           const filename = info.filename || 'upload.bin'
           try {
             const root = resolveRoot(req.rootId)
+            if (!root) {
+              uploadError = 'Files panel disabled (no file roots configured).'
+              file.resume()
+              return
+            }
             const dirFull = safeJoin(root.path, dirRel)
             ensureDir(dirFull).then(() => {
               const outPath = path.join(dirFull, path.basename(filename))
@@ -345,7 +371,10 @@ module.exports = function (app) {
         })
 
         bb.on('error', (e) => res.status(400).json({ ok: false, error: e.message || String(e) }))
-        bb.on('finish', () => res.json({ ok: true, saved }))
+        bb.on('finish', () => {
+          if (uploadError) return res.status(400).json({ ok: false, error: uploadError })
+          res.json({ ok: true, saved })
+        })
         req.pipe(bb)
       })
 
@@ -358,6 +387,7 @@ module.exports = function (app) {
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
           if (typeof content !== 'string') return res.status(400).json({ ok: false, error: 'Missing content' })
           const root = resolveRoot(req.body?.root)
+          if (!root) return res.status(400).json({ ok: false, error: 'Files panel disabled (no file roots configured).' })
           const full = safeJoin(root.path, rel)
           await ensureDir(path.dirname(full))
           if (encoding === 'base64') {
@@ -378,6 +408,7 @@ module.exports = function (app) {
           const newRel = req.body && req.body.newPath
           if (!rel || !newRel) return res.status(400).json({ ok: false, error: 'Missing path/newPath' })
           const root = resolveRoot(req.body?.root)
+          if (!root) return res.status(400).json({ ok: false, error: 'Files panel disabled (no file roots configured).' })
           const src = safeJoin(root.path, rel)
           const dst = safeJoin(root.path, newRel)
           await ensureDir(path.dirname(dst))
@@ -394,6 +425,7 @@ module.exports = function (app) {
           const rel = req.body && req.body.path
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
           const root = resolveRoot(req.body?.root)
+          if (!root) return res.status(400).json({ ok: false, error: 'Files panel disabled (no file roots configured).' })
           const target = safeJoin(root.path, rel)
           const st = await fsp.stat(target)
           if (st.isDirectory()) {

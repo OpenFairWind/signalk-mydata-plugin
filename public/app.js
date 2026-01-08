@@ -178,6 +178,10 @@ function setHidden(el, hidden) {
   el.classList.toggle('hidden', hidden)
 }
 
+function hasFileRoots() {
+  return Array.isArray(state.config.fileRoots) && state.config.fileRoots.length > 0
+}
+
 function nmToKm(nm) {
   return nm * 1.852
 }
@@ -354,11 +358,12 @@ function previewBinary(mime, data) {
 
 // Fetch a remote directory listing and update UI state.
 function activeFileRootId() {
-  return filesState.rootId || state.config.fileRoots[0]?.id || 'default'
+  if (!hasFileRoots()) return null
+  return filesState.rootId || state.config.fileRoots[0]?.id || null
 }
 
 function fileRootLabel(rootId) {
-  return state.config.fileRoots.find(root => root.id === rootId)?.label || rootId
+  return state.config.fileRoots.find(root => root.id === rootId)?.label || rootId || ''
 }
 
 function buildFileQuery(pathRel, rootId) {
@@ -370,6 +375,7 @@ function buildFileQuery(pathRel, rootId) {
 }
 
 async function remoteList(pathRel = '', rootId = activeFileRootId()) {
+  if (!hasFileRoots()) throw new Error('Files panel disabled (no file roots configured).')
   // Request listing from server.
   const res = await fetch(`${API_BASE}/files/list${buildFileQuery(pathRel, rootId)}`)
   // Parse JSON payload.
@@ -714,8 +720,10 @@ async function loadConfig() {
     if (state.config.fileRoots.length && !state.config.fileRoots.find(root => root.id === filesState.rootId)) {
       filesState.rootId = state.config.fileRoots[0].id
     }
+    if (!state.config.fileRoots.length) filesState.rootId = null
     updateConfigLabels()
     updateFileRootSelect()
+    updateFilePanelVisibility()
   } catch (e) {
     setStatus(e.message || String(e), false)
   }
@@ -730,7 +738,7 @@ function updateFileRootSelect() {
   const select = $('#fileRootSelect')
   if (!select) return
   select.innerHTML = ''
-  const roots = state.config.fileRoots.length ? state.config.fileRoots : [{ id: 'default', label: 'Default', path: '' }]
+  const roots = state.config.fileRoots.length ? state.config.fileRoots : []
   for (const root of roots) {
     const opt = document.createElement('option')
     opt.value = root.id
@@ -738,6 +746,12 @@ function updateFileRootSelect() {
     if (root.id === filesState.rootId) opt.selected = true
     select.appendChild(opt)
   }
+}
+
+function updateFilePanelVisibility() {
+  const filesTab = document.querySelector('.segmented__btn[data-tab="files"]')
+  const enabled = hasFileRoots()
+  setHidden(filesTab, !enabled)
 }
 
 // Load OpenBridge icon manifest and wire select options/mask images.
@@ -1355,19 +1369,48 @@ function sharedPathPrefix(paths) {
   return prefix.join('.')
 }
 
-function renderGroupedValues(values, { mode, labels } = {}) {
+function normalizeWaypointPropertyView(view) {
+  if (!view || typeof view !== 'object') return null
+  if (Array.isArray(view.properties)) {
+    const items = view.properties
+      .map(prop => ({
+        path: prop?.property || prop?.path || '',
+        label: prop?.label || '',
+        mode: prop?.mode || 'single-line'
+      }))
+      .filter(item => item.path)
+    return {
+      label: view.label || '',
+      layout: view.layout || null,
+      items
+    }
+  }
+  const paths = Array.isArray(view?.paths) ? view.paths.filter(Boolean) : (view?.path ? [view.path] : [])
+  const items = paths.map((path, index) => ({
+    path,
+    label: Array.isArray(view?.labels) ? view.labels[index] : '',
+    mode: view?.mode || 'single-line'
+  }))
+  if (!items.length) return null
+  return {
+    label: view.label || '',
+    layout: view.mode === 'three-view' ? 'three-view' : null,
+    items
+  }
+}
+
+function renderGroupedValues(values, { layout } = {}) {
   const wrap = document.createElement('div')
-  const isThree = mode === 'three-view'
+  const isThree = layout === 'three-view'
   wrap.className = `prop-group${isThree ? ' prop-group--three' : ''}`
-  const labelList = Array.isArray(labels) ? labels : values.map(({ path }) => labelFromPath(path))
-  values.forEach(({ value }, index) => {
+  values.forEach(({ value, label, path, mode }) => {
     const item = document.createElement('div')
     item.className = 'prop-group__item'
-    const label = document.createElement('div')
-    label.className = 'prop-group__label muted'
-    label.textContent = labelList[index] || '—'
-    const valueNode = renderCustomValue(value, mode === 'three-view' ? 'text' : (mode || 'text'))
-    item.appendChild(label)
+    const labelNode = document.createElement('div')
+    labelNode.className = 'prop-group__label muted'
+    labelNode.textContent = label || labelFromPath(path) || '—'
+    const valueNode = renderCustomValue(value, isThree ? 'text' : (mode || 'text'))
+    item.appendChild(labelNode)
     item.appendChild(valueNode)
     wrap.appendChild(item)
   })
@@ -1735,18 +1778,18 @@ function renderWaypointDetail(it, editMode) {
   }
 
   for (const view of (state.config.waypointPropertyViews || [])) {
-    const paths = Array.isArray(view?.paths) ? view.paths.filter(Boolean) : (view?.path ? [view.path] : [])
-    if (!paths.length) continue
-    const values = paths.map(path => ({ path, value: getPropByPath(p, path) }))
+    const normalized = normalizeWaypointPropertyView(view)
+    if (!normalized || !normalized.items.length) continue
+    const values = normalized.items.map(item => ({ ...item, value: getPropByPath(p, item.path) }))
     const hasValues = values.some(({ value }) => value !== undefined)
     if (!hasValues) continue
     values.forEach(({ path }) => deletePropByPath(propertiesForTree, path))
-    const prefixLabel = sharedPathPrefix(paths)
-    const rowLabel = view.label || prefixLabel || (paths.length === 1 ? paths[0] : 'Properties')
-    if (paths.length === 1 && view.mode !== 'three-view') {
-      table.appendChild(propRow(rowLabel, renderCustomValue(values[0].value, view.mode || 'single-line')))
+    const prefixLabel = sharedPathPrefix(normalized.items.map(item => item.path))
+    const rowLabel = normalized.label || prefixLabel || (normalized.items.length === 1 ? normalized.items[0].path : 'Properties')
+    if (normalized.items.length === 1 && normalized.layout !== 'three-view') {
+      table.appendChild(propRow(rowLabel, renderCustomValue(values[0].value, values[0].mode || 'single-line')))
     } else {
-      table.appendChild(propRow(rowLabel, renderGroupedValues(values, { mode: view.mode, labels: view.labels })))
+      table.appendChild(propRow(rowLabel, renderGroupedValues(values, { layout: normalized.layout })))
     }
   }
   table.appendChild(propRow('Properties', renderTreeView(propertiesForTree)))
@@ -2022,7 +2065,7 @@ function renderTableHead() {
 // Render the current tab contents into the DOM.
 function render() {
   // Determine if files tab is active.
-  const isFiles = state.tab === 'files'
+  const isFiles = state.tab === 'files' && hasFileRoots()
   // Update header text for active tab.
   $('#listTitle').textContent = state.tab[0].toUpperCase() + state.tab.slice(1)
 
@@ -2036,7 +2079,7 @@ function render() {
   const rootField = $('#fileRootField')
   if (withinField) setHidden(withinField, isFiles)
   if (iconField) setHidden(iconField, isFiles)
-  if (rootField) setHidden(rootField, !isFiles)
+  if (rootField) setHidden(rootField, !isFiles || state.config.fileRoots.length < 2)
 
   const disableWaypointActions = state.tab !== 'waypoints'
   $('#btnCreateHere')?.setAttribute('aria-disabled', disableWaypointActions)
@@ -2433,6 +2476,7 @@ async function doImport() {
 
 // Switch between tabs and rerender UI.
 function setTab(tab) {
+  if (tab === 'files' && !hasFileRoots()) return
   state.tab = tab
   state.selected.clear()
   state.page[tab] = 1
@@ -2479,7 +2523,7 @@ function updateWaypointMetrics() {
 // Wire up DOM event handlers after load.
 function wire() {
   document.querySelectorAll('.segmented__btn').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)))
-  $('#btnRefresh').addEventListener('click', () => { state.selected.clear(); refresh(); if (state.tab === 'files') remoteList(filesState.remotePath) })
+  $('#btnRefresh').addEventListener('click', () => { state.selected.clear(); refresh(); if (state.tab === 'files' && hasFileRoots()) remoteList(filesState.remotePath) })
   $('#btnPagePrev').addEventListener('click', () => { state.page[state.tab] = Math.max(1, (state.page[state.tab] || 1) - 1); render() })
   $('#btnPageNext').addEventListener('click', () => { state.page[state.tab] = (state.page[state.tab] || 1) + 1; render() })
   ;['filterText','filterWithinNm','filterType','sortBy','sortOrder'].forEach(id => {
@@ -2572,7 +2616,9 @@ async function boot() {
   await loadWaypointTypes()
   wire()
   await refresh()
-  try { await remoteList('', activeFileRootId()) } catch {}
+  if (hasFileRoots()) {
+    try { await remoteList('', activeFileRootId()) } catch {}
+  }
   connectWS()
 }
 // Start the application and surface any boot errors in the status bar.
