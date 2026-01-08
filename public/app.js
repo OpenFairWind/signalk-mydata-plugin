@@ -41,6 +41,8 @@ const state = {
   noteView: { waypointId: null, notes: [], index: 0 },
   // Mapping from resource key to DOM row for incremental updates.
   rows: new Map(),
+  // Auth metadata from Signal K login status.
+  auth: { status: null, userLevel: null },
   // Detail panel state.
   detail: { item: null, edit: false, preview: null, isNew: false }
 }
@@ -109,21 +111,29 @@ let liveSocketMonitor = null
 const RES_ENDPOINT = (type) => `/signalk/v2/api/resources/${type}`
 
 // Verify write access before attempting server mutations.
-async function ensureWriteAccess() {
+async function fetchLoginStatus({ silent = false } = {}) {
   try {
     const res = await fetch(LOGIN_STATUS_ENDPOINT, { cache: 'no-cache' })
     const j = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(`Login status failed: ${res.status}`)
-    if (j.status === "notLoggedIn" || j.userLevel === "readonly" ) {
-      alert('Read-only access detected. Please log in to make changes.')
-      setStatus('Read-only access: log in to make changes.', false)
-      return false
-    }
-    return true
+    state.auth.status = j.status || null
+    state.auth.userLevel = j.userLevel || null
+    return { ok: true, status: state.auth.status, userLevel: state.auth.userLevel }
   } catch (e) {
-    setStatus(e.message || String(e), false)
+    if (!silent) setStatus(e.message || String(e), false)
+    return { ok: false, error: e }
+  }
+}
+
+async function ensureWriteAccess() {
+  const status = await fetchLoginStatus()
+  if (!status.ok) return false
+  if (status.status === 'notLoggedIn' || status.userLevel === 'readonly') {
+    alert('Read-only access detected. Please log in to make changes.')
+    setStatus('Read-only access: log in to make changes.', false)
     return false
   }
+  return true
 }
 
 // Generate a UUID for resource identifiers with Date fallback.
@@ -898,7 +908,7 @@ function computeDerived(item) {
 }
 
 // Build a waypoint payload including GeoJSON feature metadata.
-function buildWaypointPayload({ id, name, description, position, icon, type, skIcon, properties = {}, existing }) {
+function buildWaypointPayload({ id, name, description, position, icon, type, skIcon, properties = {}, featureProperties, existing }) {
   const payload = existing ? JSON.parse(JSON.stringify(existing)) : {}
   if (id) payload.id = id
   if (name !== undefined) payload.name = name
@@ -913,7 +923,10 @@ function buildWaypointPayload({ id, name, description, position, icon, type, skI
     payload.feature = payload.feature || {}
     payload.feature.type = 'Feature'
     payload.feature.geometry = { type: 'Point', coordinates: [lon, lat] }
-    const fp = { ...(payload.feature.properties || {}) }
+    const baseFeatureProps = featureProperties !== undefined
+      ? JSON.parse(JSON.stringify(featureProperties || {}))
+      : (payload.feature.properties || {})
+    const fp = { ...baseFeatureProps }
     fp.kind = 'waypoint'
     if (type !== undefined) {
       if (type) fp.type = type
@@ -1677,7 +1690,7 @@ async function renderNoteView() {
 }
 
 // Render the waypoint detail view.
-function renderWaypointDetail(it, editMode) {
+function renderWaypointDetail(it, editMode, { allowPropertyEdit = false } = {}) {
   const table = document.createElement('table')
   table.className = 'proptable'
   const raw = state.resources.waypoints?.[it.id] || it.raw || {}
@@ -1775,6 +1788,15 @@ function renderWaypointDetail(it, editMode) {
       return sel
     })()
     table.appendChild(propRow('Icon override', iconOverrideField))
+  }
+
+  if (editMode && allowPropertyEdit) {
+    const ta = document.createElement('textarea')
+    ta.id = 'detailEditProperties'
+    ta.rows = 8
+    ta.className = 'textfield'
+    ta.value = JSON.stringify(raw.feature?.properties || {}, null, 2)
+    table.appendChild(propRow('Feature properties (JSON)', ta))
   }
 
   for (const view of (state.config.waypointPropertyViews || [])) {
@@ -1904,6 +1926,7 @@ async function renderDetail() {
   body.classList.remove('detail__body--full')
 
   if (item.type === 'waypoints') {
+    if (edit) await fetchLoginStatus({ silent: true })
     const notes = state.notesByWaypoint.get(item.id) || []
     if (notes.length) {
       actions.appendChild(btnTiny('file', 'Notes', async () => openNoteView(item.id)))
@@ -1913,7 +1936,8 @@ async function renderDetail() {
     const toggleEdit = btnTiny(edit ? 'close' : 'edit', 'Edit', async () => { state.detail.edit = !state.detail.edit; await renderDetail() })
     actions.appendChild(toggleEdit)
     actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
-    body.appendChild(renderWaypointDetail(item, edit))
+    const allowPropertyEdit = edit && state.auth.userLevel === 'admin'
+    body.appendChild(renderWaypointDetail(item, edit, { allowPropertyEdit }))
     saveable = edit
   } else if (item.type === 'routes') {
     actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
@@ -1997,6 +2021,20 @@ async function saveDetail() {
     const lon = parseFloat($('#detailEditLon')?.value)
     const wpType = $('#detailEditType')?.value?.trim()
     const skIcon = $('#detailEditIconOverride')?.value?.trim()
+    const featurePropsField = $('#detailEditProperties')
+    let featureProperties
+    if (featurePropsField) {
+      try {
+        featureProperties = JSON.parse(featurePropsField.value || '{}')
+      } catch (e) {
+        setStatus('Invalid JSON in feature properties', false)
+        return
+      }
+      if (!featureProperties || typeof featureProperties !== 'object' || Array.isArray(featureProperties)) {
+        setStatus('Feature properties must be a JSON object', false)
+        return
+      }
+    }
     if (!name || Number.isNaN(lat) || Number.isNaN(lon)) { setStatus('Missing name/position', false); return }
     const orig = state.resources.waypoints[item.id]
     if (!orig) { setStatus('Waypoint not found in cache', false); return }
@@ -2007,6 +2045,7 @@ async function saveDetail() {
       position: { latitude: lat, longitude: lon },
       type: wpType,
       skIcon,
+      featureProperties,
       existing: orig
     })
     try {
