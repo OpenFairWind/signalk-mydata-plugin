@@ -28,9 +28,14 @@
         <input id="filterText" type="text" placeholder="" />
       </label>
 
+      <label class="field hidden" id="fileRootField">
+        <span>File root</span>
+        <select id="fileRootSelect"></select>
+      </label>
+
       <div class="grid2">
         <label class="field">
-          <span>Within (NM)</span>
+          <span id="filterWithinLabel">Within (NM)</span>
           <input id="filterWithinNm" type="number" min="0" step="0.1" placeholder="e.g., 5" />
         </label>
         <label class="field">
@@ -279,6 +284,20 @@
     <div class="progress__actions">
       <button class="btn btn--tiny" id="btnCancelProgress"><span class="icon" data-icon="close"></span> Cancel</button>
     </div>
+  </div>
+</div>
+
+<div id="notePanel" class="detail hidden">
+  <div class="detail__header">
+    <div>
+      <div class="detail__title" id="noteTitle">Notes</div>
+      <div class="muted small" id="noteMeta">—</div>
+    </div>
+    <div class="detail__actions" id="noteActions"></div>
+  </div>
+  <div class="detail__body detail__body--full" id="noteBody"></div>
+  <div class="detail__footer">
+    <button class="btn btn--ghost" id="btnCloseNote"><span class="icon" data-icon="close"></span> Close</button>
   </div>
 </div>
 
