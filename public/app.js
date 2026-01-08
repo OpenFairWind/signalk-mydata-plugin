@@ -1292,12 +1292,86 @@ function deletePropByPath(obj, path) {
   delete cur[parts[parts.length - 1]]
 }
 
+function iconIdFromValue(value) {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'object') {
+    return value.icon || value.skIcon || value.id || value.type || ''
+  }
+  return String(value)
+}
+
+function labelFromValue(value) {
+  if (value == null) return '—'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number') return fmt(value, 2)
+  if (typeof value === 'object') return value.label || value.name || value.title || value.id || JSON.stringify(value)
+  return String(value)
+}
+
+function renderIconText(iconId, labelText) {
+  const wrap = document.createElement('div')
+  wrap.className = 'icon-display'
+  wrap.appendChild(renderIconCell(iconId, { fallbackId: 'waypoint' }))
+  const label = document.createElement('span')
+  label.className = 'icon-display__label'
+  label.textContent = labelText || getIconMeta(iconId)?.label || iconId || '—'
+  wrap.appendChild(label)
+  return wrap
+}
+
 function renderCustomValue(value, mode = 'single-line') {
   if (value == null) return document.createTextNode('—')
   if (mode === 'tree' && typeof value === 'object') return renderTreeView(value)
+  if (mode === 'icon') return renderIconCell(iconIdFromValue(value), { fallbackId: 'waypoint' })
+  if (mode === 'icon-text') return renderIconText(iconIdFromValue(value), labelFromValue(value))
+  if (mode === 'number') {
+    if (typeof value === 'number' && Number.isFinite(value)) return document.createTextNode(fmt(value, 2))
+    return document.createTextNode(labelFromValue(value))
+  }
+  if (mode === 'array') return renderListItems(value)
+  if (mode === 'text') return document.createTextNode(labelFromValue(value))
   if (Array.isArray(value)) return document.createTextNode(value.join(', '))
   if (typeof value === 'object') return document.createTextNode(JSON.stringify(value))
   return document.createTextNode(String(value))
+}
+
+function labelFromPath(path) {
+  if (!path) return '—'
+  const parts = path.split('.').filter(Boolean)
+  return parts[parts.length - 1] || path
+}
+
+function sharedPathPrefix(paths) {
+  if (!paths?.length) return ''
+  const segments = paths.map(path => path.split('.'))
+  const shortest = Math.min(...segments.map(parts => parts.length))
+  const prefix = []
+  for (let i = 0; i < shortest; i++) {
+    const part = segments[0][i]
+    if (segments.every(parts => parts[i] === part)) prefix.push(part)
+    else break
+  }
+  return prefix.join('.')
+}
+
+function renderGroupedValues(values, { mode, labels } = {}) {
+  const wrap = document.createElement('div')
+  const isThree = mode === 'three-view'
+  wrap.className = `prop-group${isThree ? ' prop-group--three' : ''}`
+  const labelList = Array.isArray(labels) ? labels : values.map(({ path }) => labelFromPath(path))
+  values.forEach(({ value }, index) => {
+    const item = document.createElement('div')
+    item.className = 'prop-group__item'
+    const label = document.createElement('div')
+    label.className = 'prop-group__label muted'
+    label.textContent = labelList[index] || '—'
+    const valueNode = renderCustomValue(value, mode === 'three-view' ? 'text' : (mode || 'text'))
+    item.appendChild(label)
+    item.appendChild(valueNode)
+    wrap.appendChild(item)
+  })
+  return wrap
 }
 
 function renderListItems(items) {
@@ -1630,14 +1704,25 @@ function renderWaypointDetail(it, editMode) {
   table.appendChild(propRow('Description', descField))
   table.appendChild(propRow('Position', coordsField))
   if (!editMode) {
-    const distNode = document.createElement('span')
+    const metrics = document.createElement('div')
+    metrics.className = 'detail-metrics'
+    const distWrap = document.createElement('div')
+    distWrap.className = 'detail-metric'
+    distWrap.innerHTML = `<div class="muted">Distance (${distanceUnitLabel(state.config.distanceUnit)})</div>`
+    const distNode = document.createElement('div')
     distNode.id = 'detailDistance'
     distNode.textContent = formatDistance(it.distanceNm)
-    table.appendChild(propRow(`Distance (${distanceUnitLabel(state.config.distanceUnit)})`, distNode))
-    const brgNode = document.createElement('span')
+    distWrap.appendChild(distNode)
+    const brgWrap = document.createElement('div')
+    brgWrap.className = 'detail-metric'
+    brgWrap.innerHTML = '<div class="muted">Bearing (°)</div>'
+    const brgNode = document.createElement('div')
     brgNode.id = 'detailBearing'
     brgNode.textContent = formatBearing(it.bearing)
-    table.appendChild(propRow('Bearing (°)', brgNode))
+    brgWrap.appendChild(brgNode)
+    metrics.appendChild(distWrap)
+    metrics.appendChild(brgWrap)
+    table.appendChild(propRow('Distance / Bearing', metrics))
   }
   table.appendChild(propRow('Type', typeField))
   if (editMode) {
@@ -1650,11 +1735,19 @@ function renderWaypointDetail(it, editMode) {
   }
 
   for (const view of (state.config.waypointPropertyViews || [])) {
-    if (!view?.path) continue
-    const value = getPropByPath(p, view.path)
-    if (value === undefined) continue
-    deletePropByPath(propertiesForTree, view.path)
-    table.appendChild(propRow(view.label || view.path, renderCustomValue(value, view.mode || 'single-line')))
+    const paths = Array.isArray(view?.paths) ? view.paths.filter(Boolean) : (view?.path ? [view.path] : [])
+    if (!paths.length) continue
+    const values = paths.map(path => ({ path, value: getPropByPath(p, path) }))
+    const hasValues = values.some(({ value }) => value !== undefined)
+    if (!hasValues) continue
+    values.forEach(({ path }) => deletePropByPath(propertiesForTree, path))
+    const prefixLabel = sharedPathPrefix(paths)
+    const rowLabel = view.label || prefixLabel || (paths.length === 1 ? paths[0] : 'Properties')
+    if (paths.length === 1 && view.mode !== 'three-view') {
+      table.appendChild(propRow(rowLabel, renderCustomValue(values[0].value, view.mode || 'single-line')))
+    } else {
+      table.appendChild(propRow(rowLabel, renderGroupedValues(values, { mode: view.mode, labels: view.labels })))
+    }
   }
   table.appendChild(propRow('Properties', renderTreeView(propertiesForTree)))
   return table

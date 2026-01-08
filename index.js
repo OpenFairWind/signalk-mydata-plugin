@@ -90,12 +90,24 @@ module.exports = function (app) {
           type: 'object',
           properties: {
             path: { type: 'string', title: 'Property path (dot notation)' },
+            paths: {
+              type: 'array',
+              title: 'Grouped property paths (dot notation)',
+              description: 'Render multiple properties on a single line in the waypoint detail view.',
+              items: { type: 'string' }
+            },
             label: { type: 'string', title: 'Label' },
+            labels: {
+              type: 'array',
+              title: 'Grouped labels',
+              description: 'Optional labels aligned with grouped paths.',
+              items: { type: 'string' }
+            },
             mode: {
               type: 'string',
               title: 'Render mode',
-              enum: ['tree', 'single-line'],
-              enumNames: ['Tree view', 'Single line'],
+              enum: ['tree', 'single-line', 'text', 'number', 'icon', 'icon-text', 'array', 'three-view'],
+              enumNames: ['Tree view', 'Single line', 'Text', 'Number', 'Icon', 'Icon with text', 'Array', 'Three view'],
               default: 'single-line'
             }
           }
