@@ -47,6 +47,61 @@ module.exports = function (app) {
         description: 'Files panel browses/uploads/downloads files under this server-side directory. Use an absolute path. Path traversal is blocked.',
         default: '/var/lib/signalk/mydata-files'
       },
+      additionalFileRoots: {
+        type: 'array',
+        title: 'Additional file root directories',
+        description: 'Optional extra root folders for the Files tab. Each entry needs a label and an absolute path.',
+        items: {
+          type: 'object',
+          properties: {
+            label: { type: 'string', title: 'Label' },
+            path: { type: 'string', title: 'Path' }
+          }
+        },
+        default: []
+      },
+      coordinateFormat: {
+        type: 'string',
+        title: 'Geographic coordinates format',
+        description: 'Controls how latitude/longitude are rendered in the waypoint detail.',
+        enum: ['dd', 'dm', 'dms'],
+        enumNames: ['Degrees + decimal', 'Degrees + minutes (decimal)', 'Degrees + minutes + seconds'],
+        default: 'dd'
+      },
+      distanceUnit: {
+        type: 'string',
+        title: 'Distance unit',
+        enum: ['nm', 'km'],
+        enumNames: ['Nautical miles', 'Kilometers'],
+        default: 'nm'
+      },
+      depthUnit: {
+        type: 'string',
+        title: 'Depth unit',
+        enum: ['m', 'ft', 'fathom'],
+        enumNames: ['Meters', 'Feet', 'Fathoms'],
+        default: 'm'
+      },
+      waypointPropertyViews: {
+        type: 'array',
+        title: 'Waypoint property rendering',
+        description: 'Configure which feature.properties fields should render as custom rows.',
+        items: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', title: 'Property path (dot notation)' },
+            label: { type: 'string', title: 'Label' },
+            mode: {
+              type: 'string',
+              title: 'Render mode',
+              enum: ['tree', 'single-line'],
+              enumNames: ['Tree view', 'Single line'],
+              default: 'single-line'
+            }
+          }
+        },
+        default: []
+      },
       interval: {
         type: 'number',
         title: 'Interval',
@@ -65,6 +120,17 @@ module.exports = function (app) {
   plugin.start = function (options) {
     // Resolve configured remote file root (with default).
     const remoteRoot = (options && options.remoteFileRoot) ? options.remoteFileRoot : '/var/lib/signalk/mydata-files'
+    const extraRoots = (options && Array.isArray(options.additionalFileRoots)) ? options.additionalFileRoots : []
+    const fileRoots = [
+      { id: 'default', label: 'Default', path: remoteRoot },
+      ...extraRoots
+        .filter(root => root && root.path)
+        .map((root, idx) => ({
+          id: `extra-${idx + 1}`,
+          label: root.label || root.path,
+          path: root.path
+        }))
+    ]
 
     // Router registration used by Signal K to mount HTTP handlers.
     plugin.registerWithRouter = (router) => {
@@ -110,6 +176,11 @@ module.exports = function (app) {
         return full
       }
 
+      function resolveRoot(rootId) {
+        if (!rootId) return fileRoots[0]
+        return fileRoots.find(root => root.id === rootId) || fileRoots[0]
+      }
+
       // Ensure a directory exists before writing into it.
       async function ensureDir(p) {
         await fsp.mkdir(p, { recursive: true })
@@ -129,7 +200,8 @@ module.exports = function (app) {
       router.get(`/files/list`, async (req, res) => {
         try {
           const rel = req.query.path || ''
-          const dir = safeJoin(remoteRoot, rel)
+          const root = resolveRoot(req.query.root)
+          const dir = safeJoin(root.path, rel)
           await ensureDir(dir)
           const entries = []
           const names = await fsp.readdir(dir)
@@ -138,10 +210,23 @@ module.exports = function (app) {
             entries.push(statToEntry(name, st))
           }
           entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : (a.type === 'dir' ? -1 : 1)))
-          res.json({ ok: true, path: rel, entries })
+          res.json({ ok: true, path: rel, entries, root: root.id })
         } catch (e) {
           res.status(400).json({ ok: false, error: e.message || String(e) })
         }
+      })
+
+      router.get(`/config`, (req, res) => {
+        res.json({
+          ok: true,
+          config: {
+            coordinateFormat: options?.coordinateFormat || 'dd',
+            distanceUnit: options?.distanceUnit || 'nm',
+            depthUnit: options?.depthUnit || 'm',
+            waypointPropertyViews: Array.isArray(options?.waypointPropertyViews) ? options.waypointPropertyViews : [],
+            fileRoots: fileRoots.map(root => ({ id: root.id, label: root.label, path: root.path }))
+          }
+        })
       })
 
       // Read file contents for inline preview (text, images, limited size).
@@ -149,7 +234,8 @@ module.exports = function (app) {
         try {
           const rel = req.query.path
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
-          const full = safeJoin(remoteRoot, rel)
+          const root = resolveRoot(req.query.root)
+          const full = safeJoin(root.path, rel)
           const st = await fsp.stat(full)
           if (!st.isFile()) return res.status(400).json({ ok: false, error: 'Not a file' })
           if (st.size > 5 * 1024 * 1024) {
@@ -182,7 +268,8 @@ module.exports = function (app) {
         try {
           const rel = req.query.path
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
-          const full = safeJoin(remoteRoot, rel)
+          const root = resolveRoot(req.query.root)
+          const full = safeJoin(root.path, rel)
           const st = await fsp.stat(full)
           if (st.isDirectory()) {
             const base = path.basename(full) || 'directory'
@@ -215,7 +302,8 @@ module.exports = function (app) {
         try {
           const rel = req.body && req.body.path
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
-          const full = safeJoin(remoteRoot, rel)
+          const root = resolveRoot(req.body?.root)
+          const full = safeJoin(root.path, rel)
           await ensureDir(full)
           res.json({ ok: true })
         } catch (e) {
@@ -231,12 +319,14 @@ module.exports = function (app) {
 
         bb.on('field', (name, val) => {
           if (name === 'dir') dirRel = val || ''
+          if (name === 'root') req.rootId = val
         })
 
         bb.on('file', (name, file, info) => {
           const filename = info.filename || 'upload.bin'
           try {
-            const dirFull = safeJoin(remoteRoot, dirRel)
+            const root = resolveRoot(req.rootId)
+            const dirFull = safeJoin(root.path, dirRel)
             ensureDir(dirFull).then(() => {
               const outPath = path.join(dirFull, path.basename(filename))
               saved.push({ path: path.posix.join(dirRel.replace(/\\/g,'/'), path.basename(filename)) })
@@ -261,7 +351,8 @@ module.exports = function (app) {
           const encoding = req.body && req.body.encoding
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
           if (typeof content !== 'string') return res.status(400).json({ ok: false, error: 'Missing content' })
-          const full = safeJoin(remoteRoot, rel)
+          const root = resolveRoot(req.body?.root)
+          const full = safeJoin(root.path, rel)
           await ensureDir(path.dirname(full))
           if (encoding === 'base64') {
             await fsp.writeFile(full, Buffer.from(content, 'base64'))
@@ -280,8 +371,9 @@ module.exports = function (app) {
           const rel = req.body && req.body.path
           const newRel = req.body && req.body.newPath
           if (!rel || !newRel) return res.status(400).json({ ok: false, error: 'Missing path/newPath' })
-          const src = safeJoin(remoteRoot, rel)
-          const dst = safeJoin(remoteRoot, newRel)
+          const root = resolveRoot(req.body?.root)
+          const src = safeJoin(root.path, rel)
+          const dst = safeJoin(root.path, newRel)
           await ensureDir(path.dirname(dst))
           await fsp.rename(src, dst)
           res.json({ ok: true })
@@ -295,7 +387,8 @@ module.exports = function (app) {
         try {
           const rel = req.body && req.body.path
           if (!rel) return res.status(400).json({ ok: false, error: 'Missing path' })
-          const target = safeJoin(remoteRoot, rel)
+          const root = resolveRoot(req.body?.root)
+          const target = safeJoin(root.path, rel)
           const st = await fsp.stat(target)
           if (st.isDirectory()) {
             const entries = await fsp.readdir(target)

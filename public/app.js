@@ -30,6 +30,15 @@ const state = {
   icons: null,
   waypointsTypes: null,
   skIcons: null,
+  config: {
+    coordinateFormat: 'dd',
+    distanceUnit: 'nm',
+    depthUnit: 'm',
+    waypointPropertyViews: [],
+    fileRoots: []
+  },
+  notesByWaypoint: new Map(),
+  noteView: { waypointId: null, notes: [], index: 0 },
   // Mapping from resource key to DOM row for incremental updates.
   rows: new Map(),
   // Detail panel state.
@@ -139,6 +148,8 @@ const filesState = {
   remoteEntries: [],
   // Currently selected remote file path (relative).
   selectedRemote: null,
+  // Active file root id.
+  rootId: 'default',
   // TinyMCE editor instance.
   tinyEditor: null
 }
@@ -165,6 +176,78 @@ function setHidden(el, hidden) {
   if (!el) return
   // Toggle visibility via CSS class.
   el.classList.toggle('hidden', hidden)
+}
+
+function nmToKm(nm) {
+  return nm * 1.852
+}
+
+function metersToUnit(meters, unit) {
+  if (meters == null || Number.isNaN(meters)) return null
+  if (unit === 'ft') return meters * 3.28084
+  if (unit === 'fathom') return meters / 1.8288
+  return meters
+}
+
+function metersFromUnit(value, unit) {
+  if (value == null || Number.isNaN(value)) return null
+  if (unit === 'ft' || unit === 'feet') return value / 3.28084
+  if (unit === 'fathom' || unit === 'fathoms') return value * 1.8288
+  return value
+}
+
+function distanceUnitLabel(unit) {
+  return unit === 'km' ? 'KM' : 'NM'
+}
+
+function depthUnitLabel(unit) {
+  if (unit === 'ft') return 'FT'
+  if (unit === 'fathom') return 'FATH'
+  return 'M'
+}
+
+function distanceForDisplay(nm) {
+  if (nm == null) return null
+  return state.config.distanceUnit === 'km' ? nmToKm(nm) : nm
+}
+
+function formatDistance(nm) {
+  const val = distanceForDisplay(nm)
+  if (val == null) return '—'
+  return fmt(val, 2)
+}
+
+function formatBearing(brg) {
+  if (brg == null) return '—'
+  return fmt(brg, 0)
+}
+
+function formatCoordinate(value, format, hemi) {
+  if (value == null || Number.isNaN(value)) return '—'
+  const abs = Math.abs(Number(value))
+  if (format === 'dm') {
+    const deg = Math.floor(abs)
+    const min = (abs - deg) * 60
+    return `${deg}° ${fmt(min, 3)}' ${hemi}`
+  }
+  if (format === 'dms') {
+    const deg = Math.floor(abs)
+    const minFloat = (abs - deg) * 60
+    const min = Math.floor(minFloat)
+    const sec = (minFloat - min) * 60
+    return `${deg}° ${min}' ${fmt(sec, 2)}" ${hemi}`
+  }
+  return `${fmt(abs, 6)}° ${hemi}`
+}
+
+function formatLatLon(lat, lon) {
+  const fmtType = state.config.coordinateFormat || 'dd'
+  const latHemi = lat >= 0 ? 'N' : 'S'
+  const lonHemi = lon >= 0 ? 'E' : 'W'
+  return {
+    lat: formatCoordinate(lat, fmtType, latHemi),
+    lon: formatCoordinate(lon, fmtType, lonHemi)
+  }
 }
 
 // Initialize TinyMCE editor once and return the instance.
@@ -270,15 +353,32 @@ function previewBinary(mime, data) {
 }
 
 // Fetch a remote directory listing and update UI state.
-async function remoteList(pathRel='') {
+function activeFileRootId() {
+  return filesState.rootId || state.config.fileRoots[0]?.id || 'default'
+}
+
+function fileRootLabel(rootId) {
+  return state.config.fileRoots.find(root => root.id === rootId)?.label || rootId
+}
+
+function buildFileQuery(pathRel, rootId) {
+  const params = new URLSearchParams()
+  if (pathRel) params.set('path', pathRel)
+  if (rootId) params.set('root', rootId)
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
+async function remoteList(pathRel = '', rootId = activeFileRootId()) {
   // Request listing from server.
-  const res = await fetch(`${API_BASE}/files/list?path=${encodeURIComponent(pathRel)}`)
+  const res = await fetch(`${API_BASE}/files/list${buildFileQuery(pathRel, rootId)}`)
   // Parse JSON payload.
   const j = await res.json()
   // Throw on failure so caller can surface status.
   if (!res.ok || !j.ok) throw new Error(j.error || `List failed: ${res.status}`)
   // Persist path and entries for rendering.
   filesState.remotePath = j.path || ''
+  filesState.rootId = j.root || rootId
   filesState.remoteEntries = j.entries || []
   filesState.selectedRemote = null
   state.page.files = 1
@@ -290,8 +390,9 @@ async function remoteList(pathRel='') {
 function renderCrumbs() {
   // Normalize remote path for display.
   const p = filesState.remotePath || ''
+  const rootLabel = fileRootLabel(activeFileRootId())
   // Show root indicator when empty.
-  return p ? `/ ${p}` : '/ (root)'
+  return p ? `${rootLabel}: / ${p}` : `${rootLabel}: / (root)`
 }
 
 const TEXT_FILE_TYPES = {
@@ -359,10 +460,10 @@ function buildRelPath(name) {
 }
 
 // Display remote file preview content and track mime for editor choices.
-async function remotePreview(relPath) {
+async function remotePreview(relPath, rootId = activeFileRootId()) {
   try {
     // Request file preview payload.
-    const res = await fetch(`${API_BASE}/files/read?path=${encodeURIComponent(relPath)}`)
+    const res = await fetch(`${API_BASE}/files/read${buildFileQuery(relPath, rootId)}`)
     // Parse JSON body.
     const j = await res.json()
     // Throw friendly error when request fails.
@@ -407,7 +508,7 @@ async function remoteMkdir() {
   // Compose relative path for creation.
   const rel = buildRelPath(name)
   // Issue mkdir request.
-  const res = await fetch(`${API_BASE}/files/mkdir`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: rel }) })
+  const res = await fetch(`${API_BASE}/files/mkdir`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: rel, root: activeFileRootId() }) })
   // Parse JSON response.
   const j = await res.json().catch(() => ({}))
   // Surface errors via status bar.
@@ -430,6 +531,7 @@ async function remoteUpload(files) {
   const fd = new FormData()
   // Append directory path.
   fd.append('dir', filesState.remotePath || '')
+  fd.append('root', activeFileRootId())
   // Append every file using shared field name.
   for (const f of files) fd.append('file', f, f.name)
   // POST to upload endpoint.
@@ -495,7 +597,7 @@ async function createNewTextFile() {
 async function remoteSaveText(pathRel, text) {
   if (!await ensureWriteAccess()) return false
   // Issue write request with utf8 encoding.
-  const res = await fetch(`${API_BASE}/files/write`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, content: text, encoding: 'utf8' }) })
+  const res = await fetch(`${API_BASE}/files/write`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, content: text, encoding: 'utf8', root: activeFileRootId() }) })
   // Parse response JSON for ok flag.
   const j = await res.json().catch(() => ({}))
   // Raise user-visible error on failure.
@@ -509,7 +611,7 @@ async function remoteSaveText(pathRel, text) {
 async function remoteDownload(pathRel) {
   const ctrl = beginProgress('Downloading…')
   try {
-    const res = await fetch(`${API_BASE}/files/download?path=${encodeURIComponent(pathRel)}`, { signal: ctrl.signal })
+    const res = await fetch(`${API_BASE}/files/download${buildFileQuery(pathRel, activeFileRootId())}`, { signal: ctrl.signal })
     if (!res.ok) throw new Error(`Download failed: ${res.status}`)
     const blob = await res.blob()
     const disp = res.headers.get('Content-Disposition') || ''
@@ -538,7 +640,7 @@ async function remoteRename(pathRel, newName) {
   // Compute new relative path in current directory.
   const newRel = buildRelPath(newName)
   // Perform rename via dedicated endpoint.
-  const res = await fetch(`${API_BASE}/files/rename`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, newPath: newRel }) })
+  const res = await fetch(`${API_BASE}/files/rename`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, newPath: newRel, root: activeFileRootId() }) })
   // Parse response payload.
   const j = await res.json().catch(() => ({}))
   // Handle errors gracefully.
@@ -558,7 +660,7 @@ async function remoteMove(pathRel) {
   const dest = prompt('Move to path (relative to root):', pathRel)
   if (!dest || dest === pathRel) return null
 
-  const res = await fetch(`${API_BASE}/files/rename`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, newPath: dest }) })
+  const res = await fetch(`${API_BASE}/files/rename`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, newPath: dest, root: activeFileRootId() }) })
   const j = await res.json().catch(() => ({}))
   if (!res.ok || !j.ok) { setStatus(j.error || `Move failed: ${res.status}`, false); return null }
   filesState.selectedRemote = dest
@@ -576,7 +678,7 @@ async function remoteDelete(pathRel, confirmDelete = true) {
   if (confirmDelete && !confirm(`Delete remote file "${pathRel}"?`)) return false
 
   // Send delete request.
-  const res = await fetch(`${API_BASE}/files/delete`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel }) })
+  const res = await fetch(`${API_BASE}/files/delete`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: pathRel, root: activeFileRootId() }) })
   // Parse JSON reply.
   const j = await res.json().catch(() => ({}))
   // Notify on errors.
@@ -596,6 +698,46 @@ function setStatus(text, ok = true) {
   el.textContent = text
   // Colorize based on success flag.
   el.style.color = ok ? 'var(--muted)' : 'var(--danger)'
+}
+
+async function loadConfig() {
+  try {
+    const res = await fetch(`${API_BASE}/config`, { cache: 'no-cache' })
+    const j = await res.json()
+    if (!res.ok || !j.ok) throw new Error(j.error || `Config failed: ${res.status}`)
+    const cfg = j.config || {}
+    state.config.coordinateFormat = cfg.coordinateFormat || 'dd'
+    state.config.distanceUnit = cfg.distanceUnit || 'nm'
+    state.config.depthUnit = cfg.depthUnit || 'm'
+    state.config.waypointPropertyViews = Array.isArray(cfg.waypointPropertyViews) ? cfg.waypointPropertyViews : []
+    state.config.fileRoots = Array.isArray(cfg.fileRoots) ? cfg.fileRoots : []
+    if (state.config.fileRoots.length && !state.config.fileRoots.find(root => root.id === filesState.rootId)) {
+      filesState.rootId = state.config.fileRoots[0].id
+    }
+    updateConfigLabels()
+    updateFileRootSelect()
+  } catch (e) {
+    setStatus(e.message || String(e), false)
+  }
+}
+
+function updateConfigLabels() {
+  const withinLabel = $('#filterWithinLabel')
+  if (withinLabel) withinLabel.textContent = `Within (${distanceUnitLabel(state.config.distanceUnit)})`
+}
+
+function updateFileRootSelect() {
+  const select = $('#fileRootSelect')
+  if (!select) return
+  select.innerHTML = ''
+  const roots = state.config.fileRoots.length ? state.config.fileRoots : [{ id: 'default', label: 'Default', path: '' }]
+  for (const root of roots) {
+    const opt = document.createElement('option')
+    opt.value = root.id
+    opt.textContent = root.label || root.id
+    if (root.id === filesState.rootId) opt.selected = true
+    select.appendChild(opt)
+  }
 }
 
 // Load OpenBridge icon manifest and wire select options/mask images.
@@ -683,6 +825,7 @@ function normalizeResource(type, id, obj) {
   const wpProps = type === 'waypoints' ? extractWaypointMeta(obj) : {}
   item.icon = wpProps.icon || ''
   item.wpType = wpProps.type || ''
+  if (!item.wpType && type === 'waypoints') item.wpType = 'waypoint'
   item.skIcon = wpProps.skIcon || ''
   if (!item.icon && type === 'waypoints') item.icon = iconForType(item.wpType) || 'waypoint'
   item.updated = obj.timestamp || obj.updated || obj.modified || obj.created || null
@@ -817,7 +960,8 @@ function applyFilters(list) {
   // Acquire search string.
   const q = ($('#filterText').value || '').trim().toLowerCase()
   // Parse numeric filter for distance.
-  const within = state.tab === 'files' ? NaN : parseFloat($('#filterWithinNm').value || '')
+  const withinInput = state.tab === 'files' ? NaN : parseFloat($('#filterWithinNm').value || '')
+  const within = Number.isNaN(withinInput) ? NaN : (state.config.distanceUnit === 'km' ? (withinInput / 1.852) : withinInput)
   // Icon filter selection.
   const icon = state.tab === 'files' ? '' : ($('#filterType').value || '').trim()
 
@@ -948,12 +1092,24 @@ function btnTiny(iconId, label, onClick) {
   return b
 }
 
+function applyIconMask(el, iconId) {
+  const ic = getIconMeta(iconId)
+  if (!ic) return
+  const url = (ic.baseUrl || state.icons?.baseUrl || '') + ic.path
+  const iconEl = el.querySelector('.icon')
+  if (!iconEl) return
+  iconEl.style.webkitMaskImage = `url(${url})`
+  iconEl.style.maskImage = `url(${url})`
+}
+
 // Render action buttons for a given item.
 function renderActions(it) {
   // Container for inline row actions.
   const wrap = document.createElement('div')
   wrap.className = 'row-actions'
   if (it.type === 'waypoints') {
+    const notes = state.notesByWaypoint.get(it.id) || []
+    if (notes.length) wrap.appendChild(btnTiny('file', 'Notes', () => openNoteView(it.id)))
     wrap.appendChild(btnTiny('goto', 'Go to', () => gotoWaypoint(it)))
     wrap.appendChild(btnTiny('map', 'Show on map', () => showOnMap(it)))
   } else if (it.type === 'files') {
@@ -981,6 +1137,12 @@ function closeDetail() {
   if (filesState.tinyEditor?.remove) filesState.tinyEditor.remove()
   filesState.tinyEditor = null
   state.detail = { item: null, preview: null, edit: false, isNew: false }
+}
+
+function closeNoteView() {
+  const panel = $('#notePanel')
+  if (panel) panel.classList.add('hidden')
+  state.noteView = { waypointId: null, notes: [], index: 0 }
 }
 
 // Render a property row for the detail table.
@@ -1106,6 +1268,38 @@ function renderTreeView(obj) {
   return host
 }
 
+function getPropByPath(obj, path) {
+  if (!obj || !path) return undefined
+  const parts = path.split('.').filter(Boolean)
+  let cur = obj
+  for (const part of parts) {
+    if (!cur || typeof cur !== 'object' || !(part in cur)) return undefined
+    cur = cur[part]
+  }
+  return cur
+}
+
+function deletePropByPath(obj, path) {
+  if (!obj || !path) return
+  const parts = path.split('.').filter(Boolean)
+  if (!parts.length) return
+  let cur = obj
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i]
+    if (!cur[key] || typeof cur[key] !== 'object') return
+    cur = cur[key]
+  }
+  delete cur[parts[parts.length - 1]]
+}
+
+function renderCustomValue(value, mode = 'single-line') {
+  if (value == null) return document.createTextNode('—')
+  if (mode === 'tree' && typeof value === 'object') return renderTreeView(value)
+  if (Array.isArray(value)) return document.createTextNode(value.join(', '))
+  if (typeof value === 'object') return document.createTextNode(JSON.stringify(value))
+  return document.createTextNode(String(value))
+}
+
 function renderListItems(items) {
   const wrap = document.createElement('div')
   wrap.className = 'detail-list'
@@ -1163,10 +1357,206 @@ function formatDepth(value) {
     const v = value.value ?? value.depth ?? value.meters ?? value.minimum ?? value.maximum
     const unit = value.unit || value.units || 'm'
     if (v == null) return '—'
-    return `${v} ${unit}`
+    const meters = metersFromUnit(Number(v), unit)
+    const converted = metersToUnit(meters, state.config.depthUnit)
+    if (converted == null) return '—'
+    return `${fmt(converted, 2)} ${depthUnitLabel(state.config.depthUnit)}`
   }
-  if (Number.isFinite(value)) return `${value} m`
+  if (Number.isFinite(value)) {
+    const converted = metersToUnit(Number(value), state.config.depthUnit)
+    if (converted == null) return '—'
+    return `${fmt(converted, 2)} ${depthUnitLabel(state.config.depthUnit)}`
+  }
   return String(value)
+}
+
+function noteListFromResponse(data) {
+  if (!data) return []
+  if (Array.isArray(data)) return data
+  if (typeof data === 'object') {
+    return Object.entries(data).map(([id, note]) => ({ id, ...(note || {}) }))
+  }
+  return []
+}
+
+function noteMime(note) {
+  const mime = (note?.mimeType || note?.mime || note?.contentType || '').trim()
+  return mime || 'text/plain'
+}
+
+function noteTitle(note, fallback = 'Note') {
+  return note?.title || note?.name || note?.subject || note?.id || fallback
+}
+
+function noteText(note) {
+  if (!note) return ''
+  if (typeof note.text === 'string') return note.text
+  if (typeof note.content === 'string') return note.content
+  if (typeof note.description === 'string') return note.description
+  if (typeof note.body === 'string') return note.body
+  if (note.content && typeof note.content.text === 'string') return note.content.text
+  return ''
+}
+
+function normalizeFilePath(pathValue) {
+  return (pathValue || '').replace(/\\/g, '/')
+}
+
+function matchFileRoot(filePath) {
+  const normalized = normalizeFilePath(filePath)
+  const roots = state.config.fileRoots || []
+  let match = null
+  for (const root of roots) {
+    if (!root.path) continue
+    const rootPath = normalizeFilePath(root.path).replace(/\/+$/,'')
+    if (normalized.startsWith(rootPath)) {
+      if (!match || rootPath.length > match.rootPath.length) {
+        match = { root, rootPath }
+      }
+    }
+  }
+  if (!match) return null
+  const rel = normalized.slice(match.rootPath.length).replace(/^\/+/, '')
+  return { root: match.root, relPath: rel }
+}
+
+async function fetchWaypointNotes(waypointId) {
+  if (!waypointId) return []
+  if (state.notesByWaypoint.has(waypointId)) return state.notesByWaypoint.get(waypointId)
+  const href = encodeURIComponent(`"/resources/waypoints/${waypointId}"`)
+  const res = await fetch(`/signalk/v2/api/resources/notes/?href=${href}`, { cache: 'no-cache' })
+  const j = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(j.error || `Notes failed: ${res.status}`)
+  const notes = noteListFromResponse(j)
+  state.notesByWaypoint.set(waypointId, notes)
+  return notes
+}
+
+async function openNoteView(waypointId) {
+  const notes = state.notesByWaypoint.get(waypointId) || []
+  state.noteView = { waypointId, notes, index: 0 }
+  await renderNoteView()
+}
+
+async function renderNoteView() {
+  const panel = $('#notePanel')
+  if (!panel) return
+  const { waypointId, notes, index } = state.noteView
+  if (!waypointId || !notes.length) { panel.classList.add('hidden'); return }
+  panel.classList.remove('hidden')
+  const title = $('#noteTitle')
+  const meta = $('#noteMeta')
+  const actions = $('#noteActions')
+  const body = $('#noteBody')
+  actions.innerHTML = ''
+  body.innerHTML = ''
+  const note = notes[index] || notes[0]
+  const mime = noteMime(note)
+  const noteName = noteTitle(note, `Note ${index + 1}`)
+  title.textContent = noteName
+  meta.textContent = `Note ${index + 1} of ${notes.length}`
+
+  if (notes.length > 1) {
+    const select = document.createElement('select')
+    select.className = 'note__select'
+    notes.forEach((n, i) => {
+      const opt = document.createElement('option')
+      opt.value = i
+      opt.textContent = noteTitle(n, `Note ${i + 1}`)
+      if (i === index) opt.selected = true
+      select.appendChild(opt)
+    })
+    select.addEventListener('change', async (e) => {
+      state.noteView.index = Number(e.target.value)
+      await renderNoteView()
+    })
+    actions.appendChild(select)
+  }
+
+  const toolbar = document.createElement('div')
+  toolbar.className = 'note__toolbar'
+  const url = note?.url || note?.link || ''
+  if (url) {
+    if (url.startsWith('file://')) {
+      const btn = document.createElement('button')
+      btn.className = 'btn btn--tiny'
+      btn.innerHTML = '<span class="icon" data-icon="file"></span> Open file'
+      applyIconMask(btn, 'file')
+      btn.addEventListener('click', async () => {
+        const filePath = decodeURIComponent(url.replace('file://', ''))
+        const match = matchFileRoot(filePath)
+        body.innerHTML = ''
+        if (!match) {
+          const p = document.createElement('p')
+          p.className = 'note__empty'
+          p.textContent = 'File is outside configured roots.'
+          body.appendChild(p)
+          return
+        }
+        const preview = await remotePreview(match.relPath, match.root.id)
+        if (preview?.error) {
+          const p = document.createElement('p')
+          p.className = 'note__empty'
+          p.textContent = preview.error
+          body.appendChild(p)
+          return
+        }
+        if (preview?.kind === 'text') {
+          const pre = document.createElement('pre')
+          pre.className = 'note__content'
+          pre.textContent = preview.text || ''
+          body.appendChild(pre)
+          return
+        }
+        if (preview?.kind === 'binary') {
+          body.appendChild(previewBinary(preview.mime, preview.data))
+          return
+        }
+        const p = document.createElement('p')
+        p.className = 'note__empty'
+        p.textContent = 'Unable to preview file.'
+        body.appendChild(p)
+      })
+      toolbar.appendChild(btn)
+    } else {
+      const btn = document.createElement('button')
+      btn.className = 'btn btn--tiny'
+      btn.innerHTML = '<span class="icon" data-icon="arrow-right"></span> Open link'
+      applyIconMask(btn, 'arrow-right')
+      btn.addEventListener('click', () => window.open(url, '_blank'))
+      toolbar.appendChild(btn)
+    }
+  }
+  if (note?.position?.latitude != null && note?.position?.longitude != null) {
+    const btn = document.createElement('button')
+    btn.className = 'btn btn--tiny'
+    btn.innerHTML = '<span class="icon" data-icon="map"></span> Map'
+    applyIconMask(btn, 'map')
+    btn.addEventListener('click', () => showOnMap({ id: waypointId, name: noteName, position: note.position }))
+    toolbar.appendChild(btn)
+  }
+  if (toolbar.childNodes.length) actions.appendChild(toolbar)
+
+  if (mime.startsWith('text/')) {
+    const text = noteText(note)
+    const pre = document.createElement('pre')
+    pre.className = 'note__content'
+    pre.textContent = text || '—'
+    body.appendChild(pre)
+  } else {
+    const text = noteText(note)
+    if (text) {
+      const pre = document.createElement('pre')
+      pre.className = 'note__content'
+      pre.textContent = text
+      body.appendChild(pre)
+    } else {
+      const p = document.createElement('p')
+      p.className = 'note__empty'
+      p.textContent = `No preview available for ${mime}.`
+      body.appendChild(p)
+    }
+  }
 }
 
 // Render the waypoint detail view.
@@ -1174,7 +1564,8 @@ function renderWaypointDetail(it, editMode) {
   const table = document.createElement('table')
   table.className = 'proptable'
   const raw = state.resources.waypoints?.[it.id] || it.raw || {}
-  const p = raw.properties || raw.feature?.properties || {}
+  const p = raw.feature?.properties || raw.properties || {}
+  const propertiesForTree = JSON.parse(JSON.stringify(p || {}))
 
   const nameField = editMode ? (() => {
     const inp = document.createElement('input')
@@ -1215,16 +1606,17 @@ function renderWaypointDetail(it, editMode) {
   })() : (() => {
     const wrap = document.createElement('div')
     wrap.className = 'coords-row'
+    const formatted = (latVal == null || lonVal == null) ? { lat: '—', lon: '—' } : formatLatLon(latVal, lonVal)
     const latNode = document.createElement('div')
-    latNode.innerHTML = `<div class="muted">Lat</div><div>${latVal == null ? '—' : fmt(latVal, 6)}</div>`
+    latNode.innerHTML = `<div class="muted">Lat</div><div>${formatted.lat}</div>`
     const lonNode = document.createElement('div')
-    lonNode.innerHTML = `<div class="muted">Lon</div><div>${lonVal == null ? '—' : fmt(lonVal, 6)}</div>`
+    lonNode.innerHTML = `<div class="muted">Lon</div><div>${formatted.lon}</div>`
     wrap.appendChild(latNode)
     wrap.appendChild(lonNode)
     return wrap
   })()
 
-  const typeVal = raw.properties?.type || raw.feature?.properties?.type || it.wpType || ''
+  const typeVal = raw.properties?.type || raw.feature?.properties?.type || it.wpType || 'waypoint'
   const skIconVal = raw.properties?.skIcon || raw.feature?.properties?.skIcon || it.skIcon || ''
   const iconId = it.icon || raw.properties?.icon || raw.feature?.properties?.icon || ''
   const iconField = editMode ? renderIconDisplay(skIconVal || iconId || typeVal) : renderIconDisplay(iconId || skIconVal || typeVal)
@@ -1233,17 +1625,29 @@ function renderWaypointDetail(it, editMode) {
     sel.id = 'detailEditType'
     return sel
   })() : document.createTextNode(typeVal || '—')
-  const iconOverrideField = editMode ? (() => {
-    const sel = buildSkIconSelect(skIconVal)
-    sel.id = 'detailEditIconOverride'
-    return sel
-  })() : document.createTextNode(skIconVal || '—')
 
   table.appendChild(propRow('Name', nameField))
   table.appendChild(propRow('Description', descField))
   table.appendChild(propRow('Position', coordsField))
+  if (!editMode) {
+    const distNode = document.createElement('span')
+    distNode.id = 'detailDistance'
+    distNode.textContent = formatDistance(it.distanceNm)
+    table.appendChild(propRow(`Distance (${distanceUnitLabel(state.config.distanceUnit)})`, distNode))
+    const brgNode = document.createElement('span')
+    brgNode.id = 'detailBearing'
+    brgNode.textContent = formatBearing(it.bearing)
+    table.appendChild(propRow('Bearing (°)', brgNode))
+  }
   table.appendChild(propRow('Type', typeField))
-  table.appendChild(propRow('Icon override', iconOverrideField))
+  if (editMode) {
+    const iconOverrideField = (() => {
+      const sel = buildSkIconSelect(skIconVal)
+      sel.id = 'detailEditIconOverride'
+      return sel
+    })()
+    table.appendChild(propRow('Icon override', iconOverrideField))
+  }
   table.appendChild(propRow('Icon', iconField))
   table.appendChild(propRow('Contacts', renderListItems(p.contacts)))
   table.appendChild(propRow('Slips', renderListItems(p.slips)))
@@ -1251,7 +1655,14 @@ function renderWaypointDetail(it, editMode) {
   table.appendChild(propRow('Seafloor kind', renderSeafloorKind(seafloor.kind)))
   table.appendChild(propRow('Seafloor min depth', document.createTextNode(formatDepth(seafloor.minimumDepth ?? seafloor.minimum ?? seafloor.minDepth))))
   table.appendChild(propRow('Seafloor max depth', document.createTextNode(formatDepth(seafloor.maximumDepth ?? seafloor.maximum ?? seafloor.maxDepth))))
-  table.appendChild(propRow('Properties', renderTreeView(p)))
+  for (const view of (state.config.waypointPropertyViews || [])) {
+    if (!view?.path) continue
+    const value = getPropByPath(p, view.path)
+    if (value === undefined) continue
+    deletePropByPath(propertiesForTree, view.path)
+    table.appendChild(propRow(view.label || view.path, renderCustomValue(value, view.mode || 'single-line')))
+  }
+  table.appendChild(propRow('Properties', renderTreeView(propertiesForTree)))
   return table
 }
 
@@ -1335,7 +1746,22 @@ async function renderDetail() {
   panel.classList.remove('hidden')
   panel.classList.add('detail--open')
   const { item, preview, edit, isNew } = state.detail
-  $('#detailTitle').textContent = `${item.type.slice(0, -1).toUpperCase()}: ${item.name}`
+  const titleEl = $('#detailTitle')
+  titleEl.innerHTML = ''
+  if (item.type === 'waypoints') {
+    const row = document.createElement('div')
+    row.className = 'detail__title-row'
+    const iconWrap = document.createElement('span')
+    iconWrap.className = 'detail__title-icon'
+    iconWrap.appendChild(renderIconCell(item.icon, { fallbackId: 'waypoint' }))
+    const text = document.createElement('span')
+    text.textContent = item.name || item.id
+    row.appendChild(iconWrap)
+    row.appendChild(text)
+    titleEl.appendChild(row)
+  } else {
+    titleEl.textContent = `${item.type.slice(0, -1).toUpperCase()}: ${item.name}`
+  }
   const metaNode = $('#detailMeta')
   if (item.type === 'files') metaNode.textContent = buildFileMeta(item, preview)
   else metaNode.textContent = ''
@@ -1348,6 +1774,10 @@ async function renderDetail() {
   body.classList.remove('detail__body--full')
 
   if (item.type === 'waypoints') {
+    const notes = state.notesByWaypoint.get(item.id) || []
+    if (notes.length) {
+      actions.appendChild(btnTiny('file', 'Notes', async () => openNoteView(item.id)))
+    }
     actions.appendChild(btnTiny('goto', 'Go to', () => gotoWaypoint(item)))
     actions.appendChild(btnTiny('map', 'Show on map', () => showOnMap(item)))
     const toggleEdit = btnTiny(edit ? 'close' : 'edit', 'Edit', async () => { state.detail.edit = !state.detail.edit; await renderDetail() })
@@ -1408,7 +1838,11 @@ async function openDetail(it, opts = {}) {
         state.detail.preview = { kind: 'dir' }
       }
     } else if (it.type === 'waypoints') {
+      computeDerived(it)
       state.detail.preview = { raw: state.resources.waypoints?.[it.id] || it.raw }
+      fetchWaypointNotes(it.id)
+        .then(() => { if (state.detail.item?.id === it.id) renderDetail() })
+        .catch(() => {})
     } else if (it.type === 'routes') {
       state.detail.preview = { raw: state.resources.routes?.[it.id] || it.raw }
     }
@@ -1486,11 +1920,12 @@ function renderTableHead() {
       <th class="num" style="text-align:right">Modified</th>
       <th>Actions</th>`
   } else {
+    const distLabel = distanceUnitLabel(state.config.distanceUnit)
     headRow.innerHTML = `
       <th style="width:40px"><input type="checkbox" id="selectAllHeader" /></th>
       <th>Type</th>
       <th>Name</th>
-      <th class="num" style="text-align:right">Dist (NM)</th>
+      <th class="num" style="text-align:right">Dist (${distLabel})</th>
       <th class="num" style="text-align:right">Brg (°)</th>
       <th>Actions</th>`
   }
@@ -1511,8 +1946,10 @@ function render() {
   // Toggle filter fields that are navigation-specific.
   const withinField = $('#filterWithinNm')?.closest('.field')
   const iconField = $('#filterType')?.closest('.field')
+  const rootField = $('#fileRootField')
   if (withinField) setHidden(withinField, isFiles)
   if (iconField) setHidden(iconField, isFiles)
+  if (rootField) setHidden(rootField, !isFiles)
 
   const disableWaypointActions = state.tab !== 'waypoints'
   $('#btnCreateHere')?.setAttribute('aria-disabled', disableWaypointActions)
@@ -1618,12 +2055,12 @@ function render() {
 
       const tdDist = document.createElement('td')
       tdDist.className = 'num'
-      tdDist.textContent = it.distanceNm == null ? '—' : fmt(it.distanceNm, 2)
+      tdDist.textContent = formatDistance(it.distanceNm)
       tr.appendChild(tdDist)
 
       const tdBrg = document.createElement('td')
       tdBrg.className = 'num'
-      tdBrg.textContent = it.bearing == null ? '—' : fmt(it.bearing, 0)
+      tdBrg.textContent = formatBearing(it.bearing)
       tr.appendChild(tdBrg)
 
       const tdAct = document.createElement('td')
@@ -1914,7 +2351,7 @@ function setTab(tab) {
   state.page[tab] = 1
   closeDetail()
   document.querySelectorAll('.segmented__btn').forEach(b => b.classList.toggle('segmented__btn--active', b.dataset.tab === tab))
-  if (tab === 'files' && !filesState.remoteEntries.length) remoteList(filesState.remotePath)
+  if (tab === 'files' && !filesState.remoteEntries.length) remoteList(filesState.remotePath, activeFileRootId())
   render()
 }
 
@@ -1935,8 +2372,20 @@ function updateWaypointMetrics() {
     if (!obj) continue
     const it = normalizeResource('waypoints', id, obj)
     computeDerived(it)
-    if (refs.distCell) refs.distCell.textContent = it.distanceNm == null ? '—' : fmt(it.distanceNm, 2)
-    if (refs.brgCell) refs.brgCell.textContent = it.bearing == null ? '—' : fmt(it.bearing, 0)
+    if (refs.distCell) refs.distCell.textContent = formatDistance(it.distanceNm)
+    if (refs.brgCell) refs.brgCell.textContent = formatBearing(it.bearing)
+  }
+  if (state.detail.item?.type === 'waypoints') {
+    const current = state.detail.item
+    const obj = state.resources.waypoints[current.id]
+    if (obj) {
+      const it = normalizeResource('waypoints', current.id, obj)
+      computeDerived(it)
+      const distEl = $('#detailDistance')
+      const brgEl = $('#detailBearing')
+      if (distEl) distEl.textContent = formatDistance(it.distanceNm)
+      if (brgEl) brgEl.textContent = formatBearing(it.bearing)
+    }
   }
 }
 
@@ -1961,12 +2410,18 @@ function wire() {
   $('#btnRemoteMkdir')?.addEventListener('click', remoteMkdir)
   $('#remoteUpload')?.addEventListener('change', (e) => remoteUpload(e.target.files))
   $('#btnOpenTextNew')?.addEventListener('click', openNewFileDialog)
+  $('#fileRootSelect')?.addEventListener('change', async (e) => {
+    filesState.rootId = e.target.value
+    filesState.remotePath = ''
+    await remoteList('', filesState.rootId)
+  })
   $('#doCreateFile')?.addEventListener('click', async (e) => {
     e.preventDefault()
     await createNewTextFile()
     $('#dlgNewFile')?.close()
   })
   $('#btnCloseDetail')?.addEventListener('click', closeDetail)
+  $('#btnCloseNote')?.addEventListener('click', closeNoteView)
   $('#btnSaveDetail')?.addEventListener('click', saveDetail)
 
   $('#doExport').addEventListener('click', (e) => { e.preventDefault(); doExport(); $('#dlgExport').close() })
@@ -2024,12 +2479,13 @@ function connectWS(isRetry=false) {
 
 // Boot sequence: load icons, wire events, refresh data, load files, and connect to websocket.
 async function boot() {
+  await loadConfig()
   await loadIcons()
   await loadSkIcons()
   await loadWaypointTypes()
   wire()
   await refresh()
-  try { await remoteList('') } catch {}
+  try { await remoteList('', activeFileRootId()) } catch {}
   connectWS()
 }
 // Start the application and surface any boot errors in the status bar.
