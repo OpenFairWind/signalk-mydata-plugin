@@ -1,0 +1,19 @@
+<!-- coral.svg  (key: seaFloor.type.coral) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+     fill="none" stroke="#ffffff" stroke-width="1"
+     stroke-linecap="round" stroke-linejoin="round"
+     role="img" aria-label="Coral">
+    <!-- base -->
+    <path d="M5 20h14"/>
+    <!-- main branches -->
+    <path d="M12 20V8"/>
+    <path d="M12 12c-2-1-3.5-2.8-4-5"/>
+    <path d="M12 11c2-1 3.5-2.8 4-5"/>
+    <!-- side branches -->
+    <path d="M12 15c-1.5-.5-2.5-1.5-3-3"/>
+    <path d="M12 15c1.5-.5 2.5-1.5 3-3"/>
+    <!-- coral tips -->
+    <path d="M7.8 7.8h0.01"/>
+    <path d="M16.2 7.8h0.01"/>
+    <path d="M12 5.8h0.01"/>
+</svg>
