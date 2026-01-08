@@ -100,6 +100,31 @@
       "id": "file-add",
       "label": "Add File",
       "path": "file-add.svg"
+    },
+    {
+      "id": "rocks",
+      "label": "Rocks",
+      "path": "rocks.svg"
+    },
+    {
+      "id": "algae",
+      "label": "Algae",
+      "path": "algae.svg"
+    },
+    {
+      "id": "coral",
+      "label": "Coral",
+      "path": "coral.svg"
+    },
+    {
+      "id": "mud",
+      "label": "Mud",
+      "path": "mud.svg"
+    },
+    {
+      "id": "sand",
+      "label": "Sand",
+      "path": "sand.svg"
     }
   ]
 }
