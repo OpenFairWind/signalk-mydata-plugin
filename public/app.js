@@ -1648,13 +1648,7 @@ function renderWaypointDetail(it, editMode) {
     })()
     table.appendChild(propRow('Icon override', iconOverrideField))
   }
-  table.appendChild(propRow('Icon', iconField))
-  table.appendChild(propRow('Contacts', renderListItems(p.contacts)))
-  table.appendChild(propRow('Slips', renderListItems(p.slips)))
-  const seafloor = p.seafloor || {}
-  table.appendChild(propRow('Seafloor kind', renderSeafloorKind(seafloor.kind)))
-  table.appendChild(propRow('Seafloor min depth', document.createTextNode(formatDepth(seafloor.minimumDepth ?? seafloor.minimum ?? seafloor.minDepth))))
-  table.appendChild(propRow('Seafloor max depth', document.createTextNode(formatDepth(seafloor.maximumDepth ?? seafloor.maximum ?? seafloor.maxDepth))))
+
   for (const view of (state.config.waypointPropertyViews || [])) {
     if (!view?.path) continue
     const value = getPropByPath(p, view.path)
