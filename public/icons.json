@@ -102,9 +102,9 @@
       "path": "file-add.svg"
     },
     {
-      "id": "rocks",
-      "label": "Rocks",
-      "path": "rocks.svg"
+      "id": "rock",
+      "label": "Rock",
+      "path": "rock.svg"
     },
     {
       "id": "algae",
