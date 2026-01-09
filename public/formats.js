@@ -199,13 +199,27 @@ export function parseGeoJSON(text) {
     if (!f || f.type !== 'Feature' || !f.geometry) continue // Skip invalid features.
     const g = f.geometry // Geometry reference.
     const p = { ...(f.properties || {}) } // Properties map.
-    const nameProp = p.name ?? p.title ?? f.name ?? f.id ?? 'Waypoint'
-    const descProp = p.description ?? p.desc ?? p.note ?? f.description ?? ''
+
+    let nameProp = ''
+    if (p.name) { nameProp = p.name; delete p.name }
+    else if (p.title) { nameProp = p.title; delete p.title }
+    else nameProp = f.name ?? f.id ?? 'Waypoint'
     const name = toText(nameProp, 'Waypoint') // Preferred name.
+
+    let descProp = ''
+    if (p.description) { descProp = p.description; delete p.description }
+    else if (p.desc) { descProp = p.desc; delete p.desc }
+    else descProp = f.description ?? ''
     const description = toText(descProp, '') // Preferred description.
-    const typeProp = p.type
+
+    let typeProp = ''
+    if (p.type) { typeProp = p.type; delete p.type }
+    else typeProp = 'waypoint'
+
+
     const skIcon = p.skIcon || p.skicon || ''
-    delete p.name; delete p.description; delete p.type
+
+
     const kindProp = (p.kind || typeProp || '').toString().toLowerCase() // Explicit kind property.
     const kindFromGeom = g.type === 'Point' ? 'waypoint' : (g.type === 'LineString' || g.type === 'MultiLineString') ? 'track' : '' // Infer kind.
     const kind = (kindProp === 'route' || kindProp === 'track' || kindProp === 'waypoint') ? kindProp : kindFromGeom // Decide kind.
@@ -217,8 +231,8 @@ export function parseGeoJSON(text) {
       if (Number.isNaN(lat) || Number.isNaN(lon)) continue // Skip invalid.
       items.push({
         kind: 'waypoint',
-        name,
-        description,
+        name: name,
+        description: description,
         latitude: lat,
         longitude: lon,
         type: typeProp || '',
