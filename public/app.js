@@ -1421,6 +1421,8 @@ function labelFromValue(value) {
 }
 
 function renderIconText(iconId, labelText) {
+  console.log("iconId:",iconId)
+  console.log("labelText:",labelText)
   const wrap = document.createElement('div')
   wrap.className = 'icon-display'
   wrap.appendChild(renderIconCell(iconId, { fallbackId: 'waypoint' }))
@@ -1431,20 +1433,71 @@ function renderIconText(iconId, labelText) {
   return wrap
 }
 
-function renderCustomValue(value, mode = 'single-line') {
-  if (value == null) return document.createTextNode('—')
-  if (mode === 'tree' && typeof value === 'object') return renderTreeView(value)
-  if (mode === 'icon') return renderIconCell(iconIdFromValue(value), { fallbackId: 'waypoint' })
-  if (mode === 'icon-text') return renderIconText(iconIdFromValue(value), labelFromValue(value))
-  if (mode === 'number') {
-    if (typeof value === 'number' && Number.isFinite(value)) return document.createTextNode(fmt(value, 2))
-    return document.createTextNode(labelFromValue(value))
+// Helper: create a text node with a safe fallback.
+function txt(s) {
+  return document.createTextNode(s == null || s === '' ? '—' : String(s))
+}
+
+// Helper: render either a single value or an array with a renderer.
+// Uses DocumentFragment to minimize layout work.
+function renderOneOrMany(value, renderFn, { wrapTag = 'div', wrapClass = '' } = {}) {
+  if (!Array.isArray(value)) return renderFn(value)
+
+  const wrap = document.createElement(wrapTag)
+  if (wrapClass) wrap.className = wrapClass
+
+  const frag = document.createDocumentFragment()
+  for (let i = 0; i < value.length; i++) {
+    frag.appendChild(renderFn(value[i]))
   }
-  if (mode === 'array') return renderListItems(value)
-  if (mode === 'text') return document.createTextNode(labelFromValue(value))
-  if (Array.isArray(value)) return document.createTextNode(value.join(', '))
-  if (typeof value === 'object') return document.createTextNode(JSON.stringify(value))
-  return document.createTextNode(String(value))
+  wrap.appendChild(frag)
+  return wrap
+}
+
+function renderCustomValue(value, mode = 'single-line') {
+  // Keep original semantics: null/undefined shows em dash.
+  if (value == null) return txt('—')
+
+  switch (mode) {
+    case 'tree':
+      // Original behavior: only render tree when it's an object-like value.
+      return (typeof value === 'object') ? renderTreeView(value) : txt(labelFromValue(value))
+
+    case 'icon':
+      return renderOneOrMany(
+          value,
+          (v) => renderIconCell(v, { fallbackId: 'waypoint' }),
+          { wrapClass: 'icon-list' } // optional styling hook
+      )
+
+    case 'icon-text':
+      return renderOneOrMany(
+          value,
+          (v) => renderIconDisplay(v),
+          { wrapClass: 'icon-text-list' } // optional styling hook
+      )
+
+    case 'number':
+      // Preserve numeric formatting behavior.
+      if (typeof value === 'number' && Number.isFinite(value)) return txt(fmt(value, 2))
+      return txt(labelFromValue(value))
+
+    case 'array':
+      // Delegate to existing renderer (keeps your UI formatting).
+      return renderListItems(value)
+
+    case 'text':
+      return txt(labelFromValue(value))
+
+    default:
+      // Fallback behavior identical to original:
+      // - arrays → join
+      // - objects → JSON
+      // - primitives → String
+      if (Array.isArray(value)) return txt(value.join(', '))
+      if (typeof value === 'object') return txt(JSON.stringify(value))
+      return txt(value)
+  }
 }
 
 function labelFromPath(path) {
@@ -1540,48 +1593,6 @@ function renderListItems(items) {
     wrap.appendChild(row)
   }
   return wrap
-}
-
-function iconForSeafloorKind(kind) {
-  if (!kind) return null
-  const icons = state.skIcons?.icons || []
-  if (!icons.length) return null
-  const label = typeof kind === 'string' ? kind : String(kind)
-  const hash = [...label].reduce((acc, ch) => (acc + ch.charCodeAt(0)) % icons.length, 0)
-  return icons[hash]?.id || null
-}
-
-function renderSeafloorKind(kind) {
-  if (!kind) return document.createTextNode('—')
-  const wrap = document.createElement('div')
-  wrap.className = 'icon-display'
-  const labelText = typeof kind === 'string' ? kind : String(kind)
-  const iconId = iconForSeafloorKind(labelText)
-  wrap.appendChild(renderIconCell(iconId, { fallbackId: 'waypoint' }))
-  const label = document.createElement('span')
-  label.className = 'icon-display__label'
-  label.textContent = labelText
-  wrap.appendChild(label)
-  return wrap
-}
-
-function formatDepth(value) {
-  if (value == null) return '—'
-  if (typeof value === 'object') {
-    const v = value.value ?? value.depth ?? value.meters ?? value.minimum ?? value.maximum
-    const unit = value.unit || value.units || 'm'
-    if (v == null) return '—'
-    const meters = metersFromUnit(Number(v), unit)
-    const converted = metersToUnit(meters, state.config.depthUnit)
-    if (converted == null) return '—'
-    return `${fmt(converted, 2)} ${depthUnitLabel(state.config.depthUnit)}`
-  }
-  if (Number.isFinite(value)) {
-    const converted = metersToUnit(Number(value), state.config.depthUnit)
-    if (converted == null) return '—'
-    return `${fmt(converted, 2)} ${depthUnitLabel(state.config.depthUnit)}`
-  }
-  return String(value)
 }
 
 function noteListFromResponse(data) {
