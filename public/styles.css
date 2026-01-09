@@ -254,3 +254,49 @@ dialog::backdrop{background: rgba(0,0,0,.55)}
   .layout { height: auto; min-height: 100vh; }
   .content { height: auto; overflow:auto; }
 }
+
+.treeview-wrap { width: 100%; }
+
+.treeview__toolbar{
+  display:flex; gap:8px; align-items:center;
+  padding:8px; border:1px solid var(--border);
+  border-radius:12px; margin-bottom:8px;
+  background:rgba(255,255,255,0.02);
+}
+
+.treeview__search{
+  flex:1; min-width:160px;
+  padding:8px 10px; border-radius:10px;
+  border:1px solid var(--border);
+  background:transparent; color:inherit;
+}
+
+.treeview__row{
+  display:grid;
+  grid-template-columns: 1.2fr 0.6fr 2fr auto;
+  gap:10px;
+  padding:6px 8px;
+  align-items:center;
+}
+
+.treeview__header{
+  position:sticky; top:0;
+  background:var(--panel);
+  z-index:2;
+  border-bottom:1px solid var(--border);
+  font-weight:600;
+}
+
+.treeview__key, .treeview__value{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+
+.treeview__type{ opacity:0.75; font-size:12px; }
+
+.treeview__copy{ opacity:0; transition:opacity .15s ease; }
+.treeview__row:hover .treeview__copy{ opacity:1; }
+
+.treeview__row--dim{ opacity:0.25; }
+
+.treeview__children{ padding-left:16px; border-left:1px dashed rgba(255,255,255,0.1); }
