@@ -1784,183 +1784,240 @@ async function renderNoteView() {
   }
 }
 
-// Render the waypoint detail view.
+// Render the waypoint detail view (optimized).
 function renderWaypointDetail(it, editMode, { allowPropertyEdit = false } = {}) {
   const table = document.createElement('table')
   table.className = 'proptable'
-  const raw = state.resources.waypoints?.[it.id] || it.raw || {}
-  const p = raw.feature?.properties || raw.properties || {}
-  const propertiesForTree = JSON.parse(JSON.stringify(p || {}))
 
-  const nameField = editMode ? (() => {
+  // Cache raw waypoint once.
+  const raw = state.resources.waypoints?.[it.id] || it.raw || {}
+
+  // Cache feature/properties references once (avoid repeated optional chains).
+  const feature = raw.feature || null
+  const rawProps = (feature && feature.properties) ? feature.properties : (raw.properties || {})
+  const p = rawProps || {}
+
+  // Build DOM offscreen, then append once.
+  const frag = document.createDocumentFragment()
+
+  // --- Helpers for this function (small, fast, avoids repeated code) ---
+  const mkInput = (id, value) => {
     const inp = document.createElement('input')
     inp.type = 'text'
-    inp.id = 'detailEditName'
-    inp.value = raw.name || ''
+    inp.id = id
+    inp.value = value || ''
     return inp
-  })() : document.createTextNode(raw.name || it.name || '')
+  }
 
-  const descField = editMode ? (() => {
-    // In edit mode we use TinyMCE on a textarea to offer a richer text editor:
-    // - better UX for longer notes
-    // - consistent editing experience with the Files panel
+  const mkTextarea = (id, value, rows = 6) => {
     const ta = document.createElement('textarea')
-    ta.id = 'detailWpDescEditor'
+    ta.id = id
     ta.className = 'editor__text'
-    ta.rows = 6
-    ta.value = raw.description || it.description || ''
+    ta.rows = rows
+    ta.value = value || ''
     return ta
-  })() : document.createTextNode(raw.description || it.description || '')
+  }
 
-  const latVal = raw.position?.latitude ?? it.position?.latitude ?? null
-  const lonVal = raw.position?.longitude ?? it.position?.longitude ?? null
-  const coordsField = editMode ? (() => {
+  const mkNumber = (id, placeholder, value) => {
+    const inp = document.createElement('input')
+    inp.type = 'number'
+    inp.step = '0.000001'
+    inp.id = id
+    inp.placeholder = placeholder
+    inp.value = (value ?? '') // preserve empty string when nullish
+    return inp
+  }
+
+  const mkLabelValue = (label, valueText) => {
     const wrap = document.createElement('div')
-    wrap.className = 'coords-row'
-    const inpLat = document.createElement('input')
-    inpLat.type = 'number'
-    inpLat.step = '0.000001'
-    inpLat.id = 'detailEditLat'
-    inpLat.placeholder = 'Latitude'
-    inpLat.value = latVal ?? ''
-    const inpLon = document.createElement('input')
-    inpLon.type = 'number'
-    inpLon.step = '0.000001'
-    inpLon.id = 'detailEditLon'
-    inpLon.placeholder = 'Longitude'
-    inpLon.value = lonVal ?? ''
-    wrap.appendChild(inpLat)
-    wrap.appendChild(inpLon)
+    const lab = document.createElement('div')
+    lab.className = 'muted'
+    lab.textContent = label
+    const val = document.createElement('div')
+    val.textContent = valueText
+    wrap.appendChild(lab)
+    wrap.appendChild(val)
     return wrap
-  })() : (() => {
-    const wrap = document.createElement('div')
-    wrap.className = 'coords-row'
-    const formatted = (latVal == null || lonVal == null) ? { lat: '—', lon: '—' } : formatLatLon(latVal, lonVal)
-    const latNode = document.createElement('div')
-    latNode.innerHTML = `<div class="muted">Lat</div><div>${formatted.lat}</div>`
-    const lonNode = document.createElement('div')
-    lonNode.innerHTML = `<div class="muted">Lon</div><div>${formatted.lon}</div>`
-    wrap.appendChild(latNode)
-    wrap.appendChild(lonNode)
-    return wrap
-  })()
+  }
 
-  const typeVal = raw.properties?.type || raw.feature?.properties?.type || it.wpType || 'waypoint'
-  const skIconVal = raw.properties?.skIcon || raw.feature?.properties?.skIcon || it.skIcon || ''
-  const iconId = it.icon || raw.properties?.icon || raw.feature?.properties?.icon || ''
-  const iconField = editMode ? renderIconDisplay(skIconVal || iconId || typeVal) : renderIconDisplay(iconId || skIconVal || typeVal)
-  const typeField = editMode ? (() => {
-    const sel = buildTypeSelect(typeVal)
-    sel.id = 'detailEditType'
-    return sel
-  })() : document.createTextNode(typeVal || '—')
+  // --- Name ---
+  const nameValue = raw.name || it.name || ''
+  const nameField = editMode
+      ? (() => {
+        const inp = mkInput('detailEditName', nameValue)
+        return inp
+      })()
+      : document.createTextNode(nameValue)
 
-  table.appendChild(propRow('Name', nameField))
-  table.appendChild(propRow('Description', descField))
-  table.appendChild(propRow('Position', coordsField))
+  frag.appendChild(propRow('Name', nameField))
+
+  // --- Description ---
+  const descValue = raw.description || it.description || ''
+  const descField = editMode
+      ? mkTextarea('detailWpDescEditor', descValue, 6) // TinyMCE mounted elsewhere in edit mode
+      : document.createTextNode(descValue)
+
+  frag.appendChild(propRow('Description', descField))
+
+  // --- Coordinates ---
+  const pos = raw.position || it.position || null
+  const latVal = pos?.latitude ?? null
+  const lonVal = pos?.longitude ?? null
+
+  const coordsField = editMode
+      ? (() => {
+        const wrap = document.createElement('div')
+        wrap.className = 'coords-row'
+        wrap.appendChild(mkNumber('detailEditLat', 'Latitude', latVal))
+        wrap.appendChild(mkNumber('detailEditLon', 'Longitude', lonVal))
+        return wrap
+      })()
+      : (() => {
+        const wrap = document.createElement('div')
+        wrap.className = 'coords-row'
+        const formatted = (latVal == null || lonVal == null)
+            ? { lat: '—', lon: '—' }
+            : formatLatLon(latVal, lonVal)
+        wrap.appendChild(mkLabelValue('Lat', formatted.lat))
+        wrap.appendChild(mkLabelValue('Lon', formatted.lon))
+        return wrap
+      })()
+
+  frag.appendChild(propRow('Position', coordsField))
+
+  // --- Distance / Bearing (view mode only) ---
   if (!editMode) {
     const metrics = document.createElement('div')
     metrics.className = 'detail-metrics'
+
     const distWrap = document.createElement('div')
     distWrap.className = 'detail-metric'
-    distWrap.innerHTML = `<div class="muted">Distance (${distanceUnitLabel(state.config.distanceUnit)})</div>`
-    const distNode = document.createElement('div')
+    distWrap.appendChild(mkLabelValue(`Distance (${distanceUnitLabel(state.config.distanceUnit)})`, '')) // label node
+    const distNode = distWrap.lastChild.lastChild
     distNode.id = 'detailDistance'
     distNode.textContent = formatDistance(it.distanceNm)
-    distWrap.appendChild(distNode)
+
     const brgWrap = document.createElement('div')
     brgWrap.className = 'detail-metric'
-    brgWrap.innerHTML = '<div class="muted">Bearing (°)</div>'
-    const brgNode = document.createElement('div')
+    brgWrap.appendChild(mkLabelValue('Bearing (°)', ''))
+    const brgNode = brgWrap.lastChild.lastChild
     brgNode.id = 'detailBearing'
     brgNode.textContent = formatBearing(it.bearing)
-    brgWrap.appendChild(brgNode)
+
     metrics.appendChild(distWrap)
     metrics.appendChild(brgWrap)
-    table.appendChild(propRow('Distance / Bearing', metrics))
+
+    frag.appendChild(propRow('Distance / Bearing', metrics))
   }
-  table.appendChild(propRow('Type', typeField))
+
+  // --- Type + Icon override ---
+  const typeVal = p.type || raw.type || it.wpType || 'waypoint'
+  const skIconVal = p.skIcon || it.skIcon || ''
+  const iconId = it.icon || p.icon || ''
+
+  const typeField = editMode
+      ? (() => {
+        const sel = buildTypeSelect(typeVal)
+        sel.id = 'detailEditType'
+        return sel
+      })()
+      : document.createTextNode(typeVal || '—')
+
+  frag.appendChild(propRow('Type', typeField))
+
   if (editMode) {
     const iconOverrideField = (() => {
       const sel = buildSkIconSelect(skIconVal)
       sel.id = 'detailEditIconOverride'
       return sel
     })()
-    table.appendChild(propRow('Icon override', iconOverrideField))
+    frag.appendChild(propRow('Icon override', iconOverrideField))
   }
 
+  // --- Properties editor (admin edit mode only) ---
   if (editMode && allowPropertyEdit) {
-    const ta = document.createElement('textarea')
-    // Properties is JSON. We edit it as plain text (so we can JSON.parse it later),
-    // but we still mount TinyMCE to provide a comfortable editor (large area, undo/redo, etc.).
-    ta.id = 'detailWpPropsEditor'
-    ta.className = 'editor__text'
-    ta.rows = 12
-    ta.value = JSON.stringify(raw.feature?.properties || {}, null, 2)
-    table.appendChild(propRow('Properties', ta))
+    // Keep JSON as text; TinyMCE mounted in edit mode only.
+    const propsText = JSON.stringify(p || {}, null, 2)
+    const ta = mkTextarea('detailWpPropsEditor', propsText, 12)
+    frag.appendChild(propRow('Properties', ta))
   }
 
+  if (!editMode) {
+    // --- Property views + tree rendering ---
+    // Only prepare the "remaining properties" tree copy if we will render the tree.
+    const willRenderTree = (!editMode || !allowPropertyEdit)
+    const propertiesForTree = willRenderTree ? structuredCloneSafe(p || {}) : null
 
+    // Render configured views (summary rows).
+    const views = state.config.waypointPropertyViews || []
+    for (let vi = 0; vi < views.length; vi++) {
+      const normalized = normalizeWaypointPropertyView(views[vi])
+      if (!normalized) continue
 
-  for (const view of (state.config.waypointPropertyViews || [])) {
-    const normalized = normalizeWaypointPropertyView(view)
-    if (!normalized) continue
+      const items = normalized.items
+      if (!items || items.length === 0) continue
 
-    const items = normalized.items
-    if (!items || items.length === 0) continue
+      const values = []
+      let hasValues = false
+      const paths = []
 
-    // Build values in a single pass and detect whether at least one value exists.
-    const values = []
-    let hasValues = false
-    const paths = [] // cached for sharedPathPrefix + deletions
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        const path = item.path
+        paths.push(path)
 
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i]
-      const path = it.path
-      paths.push(path)
+        const value = getPropByPath(p, path)
+        if (value !== undefined) hasValues = true
 
-      const value = getPropByPath(p, path)
-      if (value !== undefined) hasValues = true
+        values.push({
+          path,
+          label: item.label,
+          mode: item.mode,
+          value
+        })
+      }
 
-      // Avoid object spread; keep only the fields we actually use later.
-      values.push({
-        path,
-        label: it.label,
-        mode: it.mode,
-        value
-      })
+      if (!hasValues) continue
+
+      // Remove from tree copy only if we're actually going to show the tree.
+      if (propertiesForTree) {
+        for (let i = 0; i < values.length; i++) {
+          deletePropByPath(propertiesForTree, values[i].path)
+        }
+      }
+
+      const prefixLabel = paths.length ? sharedPathPrefix(paths) : ''
+      const rowLabel =
+          normalized.label ||
+          prefixLabel ||
+          (items.length === 1 ? items[0].path : 'Properties')
+
+      if (items.length === 1 && normalized.layout !== 'three-view') {
+        const mode = values[0].mode || 'single-line'
+        frag.appendChild(propRow(rowLabel, renderCustomValue(values[0].value, mode)))
+      } else {
+        frag.appendChild(propRow(rowLabel, renderGroupedValues(values, {layout: normalized.layout})))
+      }
     }
 
-    if (!hasValues) continue
-
-    // Remove shown properties from the "remaining properties" tree view.
-    for (let i = 0; i < values.length; i++) {
-      deletePropByPath(propertiesForTree, values[i].path)
-    }
-
-    // Compute row label without extra allocations.
-    const prefixLabel = paths.length ? sharedPathPrefix(paths) : ''
-    const rowLabel =
-        normalized.label ||
-        prefixLabel ||
-        (items.length === 1 ? items[0].path : 'Properties')
-
-    // Render: same branching behavior as original.
-    if (items.length === 1 && normalized.layout !== 'three-view') {
-      const mode = values[0].mode || 'single-line'
-      table.appendChild(propRow(rowLabel, renderCustomValue(values[0].value, mode)))
-    } else {
-      table.appendChild(propRow(rowLabel, renderGroupedValues(values, { layout: normalized.layout })))
+    // Tree view of remaining props (view mode OR non-admin edit mode).
+    if (willRenderTree) {
+      frag.appendChild(propRow('Properties', renderTreeView(propertiesForTree)))
     }
   }
 
-
-
-  if (!editMode || !allowPropertyEdit) {
-    table.appendChild(propRow('Properties', renderTreeView(propertiesForTree)))
-  }
-
+  // One append to the table.
+  table.appendChild(frag)
   return table
+}
+
+// Safe clone helper: uses structuredClone when available, falls back to JSON copy.
+function structuredCloneSafe(v) {
+  try {
+    if (typeof structuredClone === 'function') return structuredClone(v)
+  } catch {}
+  // Fallback (matches your previous JSON copy semantics).
+  return JSON.parse(JSON.stringify(v))
 }
 
 // Render the route detail view (read-only summary).
