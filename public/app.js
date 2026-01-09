@@ -908,54 +908,56 @@ function computeDerived(item) {
 }
 
 // Build a waypoint payload including GeoJSON feature metadata.
-function buildWaypointPayload({ id, name, description, position, icon, type, skIcon, properties = {}, featureProperties, existing }) {
-  const payload = existing ? JSON.parse(JSON.stringify(existing)) : {}
+function buildWaypointPayload({ id, name, description, type, position, properties = {}}) {
+
+  /*
+  {
+  "e16fe805-f76e-43e1-826d-dfec1f0b4fd3": {
+    "name": "Wpt-73916",
+    "description": "A waypoint",
+    "feature": {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          23.44317218974258,
+          59.989769061119716
+        ]
+      },
+      "properties": {
+        "skIcon": "virtual-north"
+      },
+      "id": ""
+    },
+    "type": "pseudoaton",
+    "timestamp": "2026-01-08T21:28:11.867Z",
+    "$source": "resources-provider"
+  }
+}
+   */
+
+  const payload = {}
   if (id) payload.id = id
   if (name !== undefined) payload.name = name
   if (description !== undefined) payload.description = description
+  if (type !== undefined) payload.type = type
 
   const lat = Number(position?.latitude)
   const lon = Number(position?.longitude)
   const hasCoords = !Number.isNaN(lat) && !Number.isNaN(lon)
 
   if (hasCoords) {
-    payload.position = { latitude: lat, longitude: lon }
-    payload.feature = payload.feature || {}
-    payload.feature.type = 'Feature'
-    payload.feature.geometry = { type: 'Point', coordinates: [lon, lat] }
-    const baseFeatureProps = featureProperties !== undefined
-      ? JSON.parse(JSON.stringify(featureProperties || {}))
-      : (payload.feature.properties || {})
-    const fp = { ...baseFeatureProps }
-    fp.kind = 'waypoint'
-    if (type !== undefined) {
-      if (type) fp.type = type
-      else delete fp.type
-    }
-    if (skIcon !== undefined) {
-      if (skIcon) fp.skIcon = skIcon
-      else delete fp.skIcon
-    }
-    if (name !== undefined) fp.name = name
-    if (description !== undefined) fp.description = description
-    if (icon) fp.icon = icon
-    payload.feature.properties = fp
-  }
 
-  const props = { ...(payload.properties || {}) }
-  if (type !== undefined) {
-    if (type) props.type = type
-    else delete props.type
+    payload.feature = {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [ lon,  lat ]
+      },
+      "properties": properties,
+      "id": ""
+    }
   }
-  if (skIcon !== undefined) {
-    if (skIcon) props.skIcon = skIcon
-    else delete props.skIcon
-  }
-  if (icon) props.icon = icon
-  else delete props.icon
-  Object.assign(props, properties)
-  if (Object.keys(props).length) payload.properties = props
-  else delete payload.properties
 
   return payload
 }
@@ -1796,7 +1798,7 @@ function renderWaypointDetail(it, editMode, { allowPropertyEdit = false } = {}) 
     ta.rows = 8
     ta.className = 'textfield'
     ta.value = JSON.stringify(raw.feature?.properties || {}, null, 2)
-    table.appendChild(propRow('Feature properties (JSON)', ta))
+    table.appendChild(propRow('Properties', ta))
   }
 
   for (const view of (state.config.waypointPropertyViews || [])) {
@@ -1814,7 +1816,11 @@ function renderWaypointDetail(it, editMode, { allowPropertyEdit = false } = {}) 
       table.appendChild(propRow(rowLabel, renderGroupedValues(values, { layout: normalized.layout })))
     }
   }
-  table.appendChild(propRow('Properties', renderTreeView(propertiesForTree)))
+
+  if (!editMode || !allowPropertyEdit) {
+    table.appendChild(propRow('Properties', renderTreeView(propertiesForTree)))
+  }
+
   return table
 }
 
@@ -2021,32 +2027,30 @@ async function saveDetail() {
     const lon = parseFloat($('#detailEditLon')?.value)
     const wpType = $('#detailEditType')?.value?.trim()
     const skIcon = $('#detailEditIconOverride')?.value?.trim()
-    const featurePropsField = $('#detailEditProperties')
-    let featureProperties
-    if (featurePropsField) {
+    const propertiesField = $('#detailEditProperties')
+    let properties = {}
+    if (propertiesField) {
       try {
-        featureProperties = JSON.parse(featurePropsField.value || '{}')
+        properties = JSON.parse(propertiesField.value || '{}')
       } catch (e) {
-        setStatus('Invalid JSON in feature properties', false)
+        setStatus('Invalid JSON in properties', false)
         return
       }
-      if (!featureProperties || typeof featureProperties !== 'object' || Array.isArray(featureProperties)) {
-        setStatus('Feature properties must be a JSON object', false)
+      if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
+        setStatus('Properties must be a JSON object', false)
         return
       }
     }
+    if (skIcon) { properties.skIcon = skIcon }
     if (!name || Number.isNaN(lat) || Number.isNaN(lon)) { setStatus('Missing name/position', false); return }
-    const orig = state.resources.waypoints[item.id]
-    if (!orig) { setStatus('Waypoint not found in cache', false); return }
+
     const updated = buildWaypointPayload({
       id: item.id,
-      name,
-      description,
-      position: { latitude: lat, longitude: lon },
+      name: name,
+      description: description,
       type: wpType,
-      skIcon,
-      featureProperties,
-      existing: orig
+      position: { latitude: lat, longitude: lon },
+      properties: properties
     })
     try {
       setStatus('Saving...')
@@ -2314,19 +2318,23 @@ async function saveWaypoint() {
   const lon = parseFloat($('#editLon').value)
   const wpType = $('#editType').value.trim()
   const skIcon = $('#editIconOverride').value.trim()
+  const wpProperties = $('#detailEditProperties').value.trim()
   if (!id || !name || Number.isNaN(lat) || Number.isNaN(lon)) { setStatus('Missing name/position', false); return }
-
-  const orig = state.resources.waypoints[id]
-  if (!orig) { setStatus('Waypoint not found in cache', false); return }
+  let properties = {}
+  if (wpProperties) {
+    properties = JSON.parse(wpProperties)
+  }
+  if (skIcon) {
+    properties.skIcon = skIcon
+  }
 
   const updated = buildWaypointPayload({
-    id,
-    name,
-    description,
-    position: { latitude: lat, longitude: lon },
+    id: id,
+    name: name,
+    description: description,
     type: wpType,
-    skIcon,
-    existing: orig
+    position: { latitude: lat, longitude: lon },
+    properties: properties
   })
 
   try {
@@ -2420,14 +2428,14 @@ async function createAtVesselPosition() {
   const name = `WP ${new Date().toISOString().slice(11,19)}`
   const id = genUuid()
   const wp = buildWaypointPayload({
-    id,
-    name,
+    id: id,
+    name: name,
     description: 'Created from Navigation Manager',
+    type: 'waypoint',
     position: { latitude: state.vesselPos.latitude, longitude: state.vesselPos.longitude },
-    type: 'waypoint'
   })
   try {
-    setStatus('Creating…')
+    setStatus('Creating...')
     const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(wp) })
     if (!res.ok) throw new Error(`Create failed: ${res.status}`)
     await refresh()
@@ -2483,16 +2491,17 @@ async function doImport() {
     if (fmtSel === 'geojson') items = parseGeoJSON(text)
 
     const creates = items.filter(x => x.kind === 'waypoint').map(it => {
-      const uuid = genUuid()
-      return buildWaypointPayload({
-        id: uuid,
+      // …
+      const item = {
+        id: genUuid(),
         name: it.name || 'Waypoint',
         description: it.description || '',
-        position: { latitude: it.latitude, longitude: it.longitude },
         type: it.type || 'waypoint',
-        skIcon: it.skIcon || '',
+        position: { latitude: it.latitude, longitude: it.longitude },
         properties: it.properties || {}
-      })
+      }
+      console.log(item)
+      return buildWaypointPayload(item)
     })
     if (!creates.length) throw new Error('No importable waypoints found')
 
