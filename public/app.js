@@ -160,8 +160,10 @@ const filesState = {
   selectedRemote: null,
   // Active file root id.
   rootId: 'default',
-  // TinyMCE editor instance.
-  tinyEditor: null
+  // TinyMCE editor instances keyed by selector.
+  // Using a Map lets us run multiple editors (e.g., Files + Waypoint Description + Properties)
+  // without clobbering a single global instance.
+  tinyEditors: new Map()
 }
 
 // Human-friendly formatting for byte sizes.
@@ -264,10 +266,28 @@ function formatLatLon(lat, lon) {
   }
 }
 
-// Initialize TinyMCE editor once and return the instance.
+// Initialize (or reuse) a TinyMCE editor for a given selector and return the instance.
+// Initialize TinyMCE editor once per selector and return the instance.
+// Pedagogical note:
+// - We keep a Map<selector, editor> so multiple editors can exist at once.
+// - We add a small content_style:
+//   * .tm-line      -> pre-wrap (nice for prose)
+//   * .tm-code-line -> pre (exact spacing, monospace; good for JSON)
 async function ensureTiny(selector = '#detailTextEditor') {
-  if (filesState.tinyEditor) return filesState.tinyEditor
+  if (!filesState.tinyEditors) filesState.tinyEditors = new Map()
+  if (filesState.tinyEditors.has(selector)) return filesState.tinyEditors.get(selector)
   if (!window.tinymce) throw new Error('TinyMCE not loaded')
+
+  const content_style = `
+    .tm-line { white-space: pre-wrap; }
+    .tm-code-line {
+      white-space: pre;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+    }
+    body { margin: 8px; }
+  `
+
   const [inst] = await tinymce.init({
     selector,
     menubar: false,
@@ -275,32 +295,83 @@ async function ensureTiny(selector = '#detailTextEditor') {
     height: '100%',
     min_height: 320,
     skin: 'oxide-dark',
-    content_css: 'dark'
+    content_css: 'dark',
+    content_style
   })
-  filesState.tinyEditor = inst
+
+  filesState.tinyEditors.set(selector, inst)
   return inst
 }
 
+// Remove a TinyMCE editor instance for a selector (if any).
+function removeTiny(selector) {
+  const inst = filesState.tinyEditors?.get?.(selector)
+  if (inst?.remove) inst.remove()
+  filesState.tinyEditors?.delete?.(selector)
+}
+
+// Remove all TinyMCE editors (used when closing/refreshing the detail panel).
+function removeAllTinies() {
+  if (!filesState.tinyEditors) return
+  for (const inst of filesState.tinyEditors.values()) {
+    if (inst?.remove) inst.remove()
+  }
+  filesState.tinyEditors.clear()
+}
+
+
 // Helper to set text editor content.
+// Helper to set TinyMCE editor content from plain text.
+// - Used for: file editor, waypoint description editor, waypoint properties (JSON) editor.
+// - Important: we keep content as simple <div> lines so TinyMCE behaves predictably.
 async function setTextEditorValue(text, selector = '#detailTextEditor') {
   try {
     const ed = await ensureTiny(selector)
-    const safe = (text || '').split('\n').map(line => (line || '').
-      replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') || '&nbsp;')
-    ed.setContent(safe.map(l => `<div>${l}</div>`).join('') || '<div><br></div>')
-  } catch {
+
+    // Decide the CSS class to apply to each line.
+    // Pedagogical note:
+    // - For JSON editors we want *monospace* + *pre* (exact spacing).
+    // - For normal text editors we can use pre-wrap (nice wrapping).
+    const isJson = selector === '#detailWpPropsEditor'
+    const lineClass = isJson ? 'tm-code-line' : 'tm-line'
+
+    // 1) Split into lines using '\n' (works for both LF and CRLF after normalization).
+    const lines = (text || '').replace(/\r\n/g, '\n').split('\n')
+
+    // 2) Escape HTML special chars so user text cannot inject markup.
+    const escape = (s) => (s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+
+    // 3) Wrap each line in a div. For empty lines we insert <br> to keep a visible line.
+    const html = lines.map((line) => {
+      const safe = escape(line)
+      return `<div class="${lineClass}">${safe || '<br>'}</div>`
+    }).join('') || `<div class="${lineClass}"><br></div>`
+
+    ed.setContent(html)
+  } catch (e) {
+    // Fallback: if TinyMCE isn't available, write to the underlying textarea.
     const el = document.querySelector(selector)
     if (el) el.value = text || ''
   }
 }
 
+
 // Helper to get text editor content as plain text.
+// Helper to get TinyMCE content as plain text.
+// Pedagogical note:
+// - TinyMCE may emit NBSP (\u00A0) depending on editing actions.
+// - JSON.parse does *not* treat NBSP as whitespace, so we normalize it.
 function getTextEditorValue(selector = '#detailTextEditor') {
-  const ed = filesState.tinyEditor
-  if (ed) return ed.getContent({ format: 'text' }) || ''
-  const el = document.querySelector(selector)
-  if (el) return el.value || ''
-  return ''
+  const ed = filesState.tinyEditors?.get?.(selector)
+  const raw = ed ? (ed.getContent({ format: 'text' }) || '') : ((document.querySelector(selector)?.value) || '')
+
+  return raw
+      .replace(/\u00A0/g, ' ')   // NBSP -> space
+      .replace(/\u202F/g, ' ')   // narrow NBSP -> space
+      .replace(/\r\n/g, '\n')  // Windows newlines -> \n
 }
 
 // Determine if a MIME type is previewable inline.
@@ -717,11 +788,16 @@ function setStatus(text, ok = true) {
 }
 
 async function loadConfig() {
+
   try {
+
     const res = await fetch(`${API_BASE}/config`, { cache: 'no-cache' })
     const j = await res.json()
-    if (!res.ok || !j.ok) throw new Error(j.error || `Config failed: ${res.status}`)
-    const cfg = j.config || {}
+
+    if (!res.ok) throw new Error(`Config failed: ${res.status}`)
+
+    const cfg = j.configuration || {}
+
     state.config.coordinateFormat = cfg.coordinateFormat || 'dd'
     state.config.distanceUnit = cfg.distanceUnit || 'nm'
     state.config.depthUnit = cfg.depthUnit || 'm'
@@ -730,6 +806,7 @@ async function loadConfig() {
     if (state.config.fileRoots.length && !state.config.fileRoots.find(root => root.id === filesState.rootId)) {
       filesState.rootId = state.config.fileRoots[0].id
     }
+
     if (!state.config.fileRoots.length) filesState.rootId = null
     updateConfigLabels()
     updateFileRootSelect()
@@ -1159,12 +1236,17 @@ function escapeHtml(s) {
   return (s || '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]))
 }
 
-// Clear detail panel and TinyMCE instance.
+// Clear detail panel and TinyMCE instances.
 function closeDetail() {
   const panel = $('#detailPanel')
   if (panel) panel.classList.add('hidden')
-  if (filesState.tinyEditor?.remove) filesState.tinyEditor.remove()
-  filesState.tinyEditor = null
+
+  // Pedagogical note:
+  // TinyMCE creates iframes and global event handlers; if we do not remove editors
+  // when closing the panel, memory leaks and duplicate toolbars can appear.
+  removeAllTinies()
+
+  // Reset detail state.
   state.detail = { item: null, preview: null, edit: false, isNew: false }
 }
 
@@ -1388,12 +1470,12 @@ function normalizeWaypointPropertyView(view) {
   if (!view || typeof view !== 'object') return null
   if (Array.isArray(view.properties)) {
     const items = view.properties
-      .map(prop => ({
-        path: prop?.property || prop?.path || '',
-        label: prop?.label || '',
-        mode: prop?.mode || 'single-line'
-      }))
-      .filter(item => item.path)
+        .map(prop => ({
+          path: prop?.property || prop?.path || '',
+          label: prop?.label || '',
+          mode: prop?.mode || 'single-line'
+        }))
+        .filter(item => item.path)
     return {
       label: view.label || '',
       layout: view.layout || null,
@@ -1708,9 +1790,13 @@ function renderWaypointDetail(it, editMode, { allowPropertyEdit = false } = {}) 
   })() : document.createTextNode(raw.name || it.name || '')
 
   const descField = editMode ? (() => {
+    // In edit mode we use TinyMCE on a textarea to offer a richer text editor:
+    // - better UX for longer notes
+    // - consistent editing experience with the Files panel
     const ta = document.createElement('textarea')
-    ta.id = 'detailEditDesc'
-    ta.rows = 3
+    ta.id = 'detailWpDescEditor'
+    ta.className = 'editor__text'
+    ta.rows = 6
     ta.value = raw.description || it.description || ''
     return ta
   })() : document.createTextNode(raw.description || it.description || '')
@@ -1794,28 +1880,70 @@ function renderWaypointDetail(it, editMode, { allowPropertyEdit = false } = {}) 
 
   if (editMode && allowPropertyEdit) {
     const ta = document.createElement('textarea')
-    ta.id = 'detailEditProperties'
-    ta.rows = 8
-    ta.className = 'textfield'
+    // Properties is JSON. We edit it as plain text (so we can JSON.parse it later),
+    // but we still mount TinyMCE to provide a comfortable editor (large area, undo/redo, etc.).
+    ta.id = 'detailWpPropsEditor'
+    ta.className = 'editor__text'
+    ta.rows = 12
     ta.value = JSON.stringify(raw.feature?.properties || {}, null, 2)
     table.appendChild(propRow('Properties', ta))
   }
 
+
+
   for (const view of (state.config.waypointPropertyViews || [])) {
     const normalized = normalizeWaypointPropertyView(view)
-    if (!normalized || !normalized.items.length) continue
-    const values = normalized.items.map(item => ({ ...item, value: getPropByPath(p, item.path) }))
-    const hasValues = values.some(({ value }) => value !== undefined)
+    if (!normalized) continue
+
+    const items = normalized.items
+    if (!items || items.length === 0) continue
+
+    // Build values in a single pass and detect whether at least one value exists.
+    const values = []
+    let hasValues = false
+    const paths = [] // cached for sharedPathPrefix + deletions
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i]
+      const path = it.path
+      paths.push(path)
+
+      const value = getPropByPath(p, path)
+      if (value !== undefined) hasValues = true
+
+      // Avoid object spread; keep only the fields we actually use later.
+      values.push({
+        path,
+        label: it.label,
+        mode: it.mode,
+        value
+      })
+    }
+
     if (!hasValues) continue
-    values.forEach(({ path }) => deletePropByPath(propertiesForTree, path))
-    const prefixLabel = sharedPathPrefix(normalized.items.map(item => item.path))
-    const rowLabel = normalized.label || prefixLabel || (normalized.items.length === 1 ? normalized.items[0].path : 'Properties')
-    if (normalized.items.length === 1 && normalized.layout !== 'three-view') {
-      table.appendChild(propRow(rowLabel, renderCustomValue(values[0].value, values[0].mode || 'single-line')))
+
+    // Remove shown properties from the "remaining properties" tree view.
+    for (let i = 0; i < values.length; i++) {
+      deletePropByPath(propertiesForTree, values[i].path)
+    }
+
+    // Compute row label without extra allocations.
+    const prefixLabel = paths.length ? sharedPathPrefix(paths) : ''
+    const rowLabel =
+        normalized.label ||
+        prefixLabel ||
+        (items.length === 1 ? items[0].path : 'Properties')
+
+    // Render: same branching behavior as original.
+    if (items.length === 1 && normalized.layout !== 'three-view') {
+      const mode = values[0].mode || 'single-line'
+      table.appendChild(propRow(rowLabel, renderCustomValue(values[0].value, mode)))
     } else {
       table.appendChild(propRow(rowLabel, renderGroupedValues(values, { layout: normalized.layout })))
     }
   }
+
+
 
   if (!editMode || !allowPropertyEdit) {
     table.appendChild(propRow('Properties', renderTreeView(propertiesForTree)))
@@ -1944,6 +2072,19 @@ async function renderDetail() {
     actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
     const allowPropertyEdit = edit && state.auth.userLevel === 'admin'
     body.appendChild(renderWaypointDetail(item, edit, { allowPropertyEdit }))
+
+    // If we are editing, mount TinyMCE on the Description (and Properties for admin).
+    // Pedagogical note:
+    // - We set content *after* the DOM nodes exist, because TinyMCE needs the textarea in the document.
+    if (edit) {
+      const rawWp = state.resources.waypoints?.[item.id] || item.raw || {}
+      await setTextEditorValue(rawWp.description || '', '#detailWpDescEditor')
+      if (allowPropertyEdit) {
+        const props = rawWp.feature?.properties || rawWp.properties || {}
+        await setTextEditorValue(JSON.stringify(props || {}, null, 2), '#detailWpPropsEditor')
+      }
+    }
+
     saveable = edit
   } else if (item.type === 'routes') {
     actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
@@ -1980,8 +2121,9 @@ async function renderDetail() {
 
 // Open the detail overlay for a given item.
 async function openDetail(it, opts = {}) {
-  filesState.tinyEditor?.remove?.()
-  filesState.tinyEditor = null
+  // Ensure we start from a clean editor slate.
+  // This avoids TinyMCE instances from previous items (files/waypoints) lingering in the DOM.
+  removeAllTinies()
   state.detail = { item: it, preview: null, edit: !!opts.edit, isNew: !!opts.isNew }
   try {
     if (opts.preview) {
@@ -2001,8 +2143,8 @@ async function openDetail(it, opts = {}) {
       computeDerived(it)
       state.detail.preview = { raw: state.resources.waypoints?.[it.id] || it.raw }
       fetchWaypointNotes(it.id)
-        .then(() => { if (state.detail.item?.id === it.id) renderDetail() })
-        .catch(() => {})
+          .then(() => { if (state.detail.item?.id === it.id) renderDetail() })
+          .catch(() => {})
     } else if (it.type === 'routes') {
       state.detail.preview = { raw: state.resources.routes?.[it.id] || it.raw }
     }
@@ -2022,16 +2164,16 @@ async function saveDetail() {
   if (item.type === 'waypoints') {
 
     const name = $('#detailEditName')?.value?.trim()
-    const description = $('#detailEditDesc')?.value?.trim()
+    const description = (getTextEditorValue('#detailWpDescEditor') || '').trim()
     const lat = parseFloat($('#detailEditLat')?.value)
     const lon = parseFloat($('#detailEditLon')?.value)
     const wpType = $('#detailEditType')?.value?.trim()
     const skIcon = $('#detailEditIconOverride')?.value?.trim()
-    const propertiesField = $('#detailEditProperties')
+    const propertiesField = document.querySelector('#detailWpPropsEditor')
     let properties = {}
     if (propertiesField) {
       try {
-        properties = JSON.parse(propertiesField.value || '{}')
+        properties = JSON.parse(getTextEditorValue('#detailWpPropsEditor') || '{}')
       } catch (e) {
         setStatus('Invalid JSON in properties', false)
         return
@@ -2318,7 +2460,7 @@ async function saveWaypoint() {
   const lon = parseFloat($('#editLon').value)
   const wpType = $('#editType').value.trim()
   const skIcon = $('#editIconOverride').value.trim()
-  const wpProperties = $('#detailEditProperties').value.trim()
+  const wpProperties = (getTextEditorValue('#detailWpPropsEditor') || $('#detailEditProperties')?.value || '').trim()
   if (!id || !name || Number.isNaN(lat) || Number.isNaN(lon)) { setStatus('Missing name/position', false); return }
   let properties = {}
   if (wpProperties) {
