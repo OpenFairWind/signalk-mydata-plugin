@@ -15,11 +15,11 @@ const state = {
   // Current active tab.
   tab: 'waypoints',
   // Pagination tracking per tab.
-  page: { waypoints: 1, routes: 1, files: 1 },
+  page: { waypoints: 1, routes: 1, tracks: 1, charts: 1, regions: 1, notes: 1, files: 1 },
   // Dynamic page size per tab computed from viewport.
-  pageSize: { waypoints: 8, routes: 8, files: 8 },
+  pageSize: { waypoints: 8, routes: 8, tracks: 8, charts: 8, regions: 8, notes: 8, files: 8 },
   // Cached resources keyed by type.
-  resources: { waypoints: {}, routes: {}, tracks: {} },
+  resources: { waypoints: {}, routes: {}, tracks: {}, charts: {}, regions: {}, notes: {} },
   // Currently rendered list items for the active tab.
   list: [],
   // Selected resource ids in a Set of "type:id" keys.
@@ -43,6 +43,7 @@ const state = {
   rows: new Map(),
   // Auth metadata from Signal K login status.
   auth: { status: null, userLevel: null },
+  plugins: { freeboard: false, charts: false },
   // Detail panel state.
   detail: { item: null, edit: false, preview: null, isNew: false }
 }
@@ -109,6 +110,10 @@ let liveSocket = null
 let liveSocketMonitor = null
 // Helper to build fully qualified Signal K v2 resource endpoints.
 const RES_ENDPOINT = (type) => `/signalk/v2/api/resources/${type}`
+// Ordered tab list used for rendering and validation.
+const TAB_ORDER = ['waypoints', 'routes', 'tracks', 'charts', 'regions', 'notes', 'files']
+// Resource-backed tabs (everything except files).
+const RESOURCE_TABS = ['waypoints', 'routes', 'tracks', 'charts', 'regions', 'notes']
 
 // Verify write access before attempting server mutations.
 async function fetchLoginStatus({ silent = false } = {}) {
@@ -816,6 +821,40 @@ async function loadConfig() {
   }
 }
 
+function normalizePluginList(data) {
+  if (!data) return []
+  if (Array.isArray(data)) return data
+  if (Array.isArray(data.plugins)) return data.plugins
+  if (typeof data === 'object') return Object.values(data)
+  return []
+}
+
+function pluginMatches(plugin, id) {
+  if (!plugin || !id) return false
+  const candidates = [
+    plugin.id,
+    plugin.name,
+    plugin.packageName,
+    plugin.pluginId,
+    plugin.package
+  ].filter(Boolean)
+  return candidates.some((value) => value === id)
+}
+
+async function loadPluginStatus() {
+  try {
+    const res = await fetch('/signalk/v1/api/plugins', { cache: 'no-cache' })
+    if (!res.ok) throw new Error(`Plugin list failed: ${res.status}`)
+    const data = await res.json()
+    const plugins = normalizePluginList(data)
+    state.plugins.freeboard = plugins.some((p) => pluginMatches(p, '@signalk/freeboard-sk'))
+    state.plugins.charts = plugins.some((p) => pluginMatches(p, '@signalk/charts-plugin'))
+    updateTabVisibility()
+  } catch (e) {
+    setStatus(e.message || String(e), false)
+  }
+}
+
 function updateConfigLabels() {
   const withinLabel = $('#filterWithinLabel')
   if (withinLabel) withinLabel.textContent = `Within (${distanceUnitLabel(state.config.distanceUnit)})`
@@ -836,9 +875,26 @@ function updateFileRootSelect() {
 }
 
 function updateFilePanelVisibility() {
-  const filesTab = document.querySelector('.segmented__btn[data-tab="files"]')
-  const enabled = hasFileRoots()
-  setHidden(filesTab, !enabled)
+  updateTabVisibility()
+}
+
+function isTabEnabled(tab) {
+  if (tab === 'tracks') return state.plugins.freeboard
+  if (tab === 'charts') return state.plugins.charts
+  if (tab === 'files') return hasFileRoots()
+  return true
+}
+
+function updateTabVisibility() {
+  TAB_ORDER.forEach((tab) => {
+    const btn = document.querySelector(`.segmented__btn[data-tab="${tab}"]`)
+    if (btn) setHidden(btn, !isTabEnabled(tab))
+  })
+  if (!isTabEnabled(state.tab)) {
+    const fallback = TAB_ORDER.find((tab) => isTabEnabled(tab)) || 'waypoints'
+    state.tab = fallback
+  }
+  document.querySelectorAll('.segmented__btn').forEach(b => b.classList.toggle('segmented__btn--active', b.dataset.tab === state.tab))
 }
 
 // Load OpenBridge icon manifest and wire select options/mask images.
@@ -928,7 +984,15 @@ function normalizeResource(type, id, obj) {
   item.wpType = wpProps.type || ''
   if (!item.wpType && type === 'waypoints') item.wpType = 'waypoint'
   item.skIcon = wpProps.skIcon || ''
+  const fallbackIcons = {
+    routes: 'map',
+    tracks: 'map',
+    regions: 'map',
+    notes: 'file',
+    charts: 'file'
+  }
   if (!item.icon && type === 'waypoints') item.icon = iconForType(item.wpType) || 'waypoint'
+  if (!item.icon && fallbackIcons[type]) item.icon = fallbackIcons[type]
   item.updated = obj.timestamp || obj.updated || obj.modified || obj.created || null
 
   // Extract waypoint position when available.
@@ -1039,6 +1103,58 @@ function buildWaypointPayload({ id, name, description, type, position, propertie
   return payload
 }
 
+function buildLinePayload({ id, name, description, points = [] }) {
+  const coords = (points || []).map(p => [Number(p.longitude), Number(p.latitude)])
+      .filter(c => !Number.isNaN(c[0]) && !Number.isNaN(c[1]))
+  return {
+    id,
+    name,
+    description,
+    feature: {
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: coords
+      },
+      properties: {},
+      id: ''
+    }
+  }
+}
+
+function buildRegionPayload({ id, name, description, geometry, properties = {} }) {
+  return {
+    id,
+    name,
+    description,
+    feature: {
+      type: 'Feature',
+      geometry: geometry || { type: 'Polygon', coordinates: [] },
+      properties: properties || {},
+      id: ''
+    }
+  }
+}
+
+function buildResourceTemplate(type) {
+  if (type === 'routes') {
+    return buildLinePayload({ id: '', name: 'Route', description: '', points: [] })
+  }
+  if (type === 'tracks') {
+    return buildLinePayload({ id: '', name: 'Track', description: '', points: [] })
+  }
+  if (type === 'regions') {
+    return buildRegionPayload({ id: '', name: 'Region', description: '', geometry: { type: 'Polygon', coordinates: [] }, properties: {} })
+  }
+  if (type === 'notes') {
+    return { id: '', name: 'Note', description: '', text: '' }
+  }
+  if (type === 'charts') {
+    return { id: '', name: 'Chart', description: '', url: '' }
+  }
+  return { id: '', name: 'Resource', description: '' }
+}
+
 // Return list of items for the current tab.
 function getItemsForTab() {
   // Capture active tab key.
@@ -1061,15 +1177,42 @@ function getItemsForTab() {
   return Object.entries(r).map(([id, obj]) => normalizeResource(tab, id, obj))
 }
 
+function formatsForTab(tab) {
+  const formats = {
+    waypoints: ['csv', 'gpx', 'kml', 'geojson', 'json'],
+    routes: ['gpx', 'kml', 'geojson', 'json'],
+    tracks: ['gpx', 'kml', 'geojson', 'json'],
+    regions: ['geojson', 'json'],
+    notes: ['json'],
+    charts: ['json']
+  }
+  return formats[tab] || []
+}
+
+function updateFormatOptions(tab) {
+  const formatLabels = { csv: 'CSV', gpx: 'GPX', kml: 'KML', geojson: 'GeoJSON', json: 'JSON' }
+  const formats = formatsForTab(tab)
+  for (const sel of [$('#exportFormat'), $('#importFormat')]) {
+    if (!sel) continue
+    sel.innerHTML = ''
+    for (const fmtId of formats) {
+      const opt = document.createElement('option')
+      opt.value = fmtId
+      opt.textContent = formatLabels[fmtId] || fmtId
+      sel.appendChild(opt)
+    }
+  }
+}
+
 // Apply filters from UI controls to a provided list.
 function applyFilters(list) {
   // Acquire search string.
   const q = ($('#filterText').value || '').trim().toLowerCase()
   // Parse numeric filter for distance.
-  const withinInput = state.tab === 'files' ? NaN : parseFloat($('#filterWithinNm').value || '')
+  const withinInput = state.tab === 'waypoints' ? parseFloat($('#filterWithinNm').value || '') : NaN
   const within = Number.isNaN(withinInput) ? NaN : (state.config.distanceUnit === 'km' ? (withinInput / 1.852) : withinInput)
   // Icon filter selection.
-  const icon = state.tab === 'files' ? '' : ($('#filterType').value || '').trim()
+  const icon = state.tab === 'waypoints' ? ($('#filterType').value || '').trim() : ''
 
   // Filter list based on conditions.
   return list.filter(it => {
@@ -1226,6 +1369,7 @@ function renderActions(it) {
     wrap.appendChild(btnTiny('edit', 'View', () => openDetail(it)))
     wrap.appendChild(btnTiny('trash', 'Delete', () => deleteResource(it)))
   } else {
+    wrap.appendChild(btnTiny('edit', 'Edit', () => openDetail(it, { edit: true })))
     wrap.appendChild(btnTiny('trash', 'Delete', () => deleteResource(it)))
   }
   return wrap
@@ -2020,13 +2164,33 @@ function structuredCloneSafe(v) {
   return JSON.parse(JSON.stringify(v))
 }
 
-// Render the route detail view (read-only summary).
-function renderRouteDetail(it) {
+function renderResourceDetail(it, { preview = null, editMode = false, isNew = false } = {}) {
   const table = document.createElement('table')
   table.className = 'proptable'
-  table.appendChild(propRow('Name', document.createTextNode(it.name || it.id)))
-  table.appendChild(propRow('Description', document.createTextNode(it.description || '—')))
-  table.appendChild(propRow('Updated', document.createTextNode(it.updated ? new Date(it.updated).toLocaleString() : '—')))
+  const raw = preview?.raw || state.resources[it.type]?.[it.id] || it.raw || {}
+  const name = raw.name || raw.title || it.name || it.id
+  const description = raw.description || raw.note || it.description || '—'
+  const updated = raw.timestamp || raw.updated || raw.modified || raw.created || it.updated || null
+  const idField = document.createElement('input')
+  idField.type = 'text'
+  idField.id = 'detailResourceId'
+  idField.value = raw.id || it.id || ''
+  idField.disabled = !isNew
+
+  if (editMode) {
+    table.appendChild(propRow('ID', idField))
+    const ta = document.createElement('textarea')
+    ta.id = 'detailResourceJson'
+    ta.className = 'editor__text'
+    ta.rows = 14
+    ta.value = JSON.stringify(raw, null, 2)
+    table.appendChild(propRow('JSON', ta))
+  } else {
+    table.appendChild(propRow('Name', document.createTextNode(name || '—')))
+    table.appendChild(propRow('Description', document.createTextNode(description || '—')))
+    table.appendChild(propRow('Updated', document.createTextNode(updated ? new Date(updated).toLocaleString() : '—')))
+    table.appendChild(propRow('Data', renderTreeView(raw)))
+  }
   return table
 }
 
@@ -2154,9 +2318,6 @@ async function renderDetail() {
     }
 
     saveable = edit
-  } else if (item.type === 'routes') {
-    actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
-    body.appendChild(renderRouteDetail(item))
   } else if (item.type === 'files') {
     actions.appendChild(btnTiny('download', 'Download', () => remoteDownload(item.id)))
     if (item.fileType === 'file') {
@@ -2182,6 +2343,12 @@ async function renderDetail() {
     const fileDetail = await renderFileDetail(item, preview, edit, isNew, { fullView })
     saveable = fileDetail.saveable
     body.appendChild(fileDetail.node)
+  } else {
+    const toggleEdit = btnTiny(edit ? 'close' : 'edit', 'Edit', async () => { state.detail.edit = !state.detail.edit; await renderDetail() })
+    actions.appendChild(toggleEdit)
+    actions.appendChild(btnTiny('trash', 'Delete', () => deleteResource(item)))
+    body.appendChild(renderResourceDetail(item, { preview, editMode: edit, isNew }))
+    saveable = edit
   }
 
   if (saveable) saveBtn.classList.remove('hidden')
@@ -2213,8 +2380,8 @@ async function openDetail(it, opts = {}) {
       fetchWaypointNotes(it.id)
           .then(() => { if (state.detail.item?.id === it.id) renderDetail() })
           .catch(() => {})
-    } else if (it.type === 'routes') {
-      state.detail.preview = { raw: state.resources.routes?.[it.id] || it.raw }
+    } else if (RESOURCE_TABS.includes(it.type)) {
+      state.detail.preview = { raw: state.resources[it.type]?.[it.id] || it.raw }
     }
   } catch (e) {
     state.detail.preview = { ok: false, error: e.message || String(e) }
@@ -2285,6 +2452,40 @@ async function saveDetail() {
       await remoteList(filesState.remotePath)
       await openDetail({ ...item, id: path, name: path.split('/').pop(), fileType: 'file' }, { edit: true })
     }
+    return
+  }
+
+  if (RESOURCE_TABS.includes(item.type)) {
+    const idField = $('#detailResourceId')
+    let id = (idField?.value || item.id || '').trim()
+    if (!id) id = genUuid()
+    const rawText = $('#detailResourceJson')?.value || ''
+    let payload = {}
+    try {
+      payload = rawText ? JSON.parse(rawText) : {}
+    } catch (e) {
+      setStatus('Invalid JSON payload', false)
+      return
+    }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      setStatus('Payload must be a JSON object', false)
+      return
+    }
+    payload.id = id
+    try {
+      setStatus('Saving...')
+      const res = await fetch(`${RES_ENDPOINT(item.type)}/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (!res.ok) throw new Error(`Save failed: ${res.status}`)
+      await refresh()
+      state.detail.edit = false
+      state.detail.isNew = false
+      await openDetail(normalizeResource(item.type, id, payload))
+      setStatus('Saved ✔', true)
+    } catch (e) { setStatus(e.message || String(e), false) }
   }
 }
 
@@ -2330,15 +2531,22 @@ function render() {
   const withinField = $('#filterWithinNm')?.closest('.field')
   const iconField = $('#filterType')?.closest('.field')
   const rootField = $('#fileRootField')
-  if (withinField) setHidden(withinField, isFiles)
-  if (iconField) setHidden(iconField, isFiles)
+  const showWaypointFilters = state.tab === 'waypoints'
+  if (withinField) setHidden(withinField, !showWaypointFilters)
+  if (iconField) setHidden(iconField, !showWaypointFilters)
   if (rootField) setHidden(rootField, !isFiles || state.config.fileRoots.length < 2)
 
   const disableWaypointActions = state.tab !== 'waypoints'
+  const disableResourceCreate = state.tab === 'waypoints' || state.tab === 'files'
+  const disableImportExport = state.tab === 'files'
   $('#btnCreateHere')?.setAttribute('aria-disabled', disableWaypointActions)
   if ($('#btnCreateHere')) $('#btnCreateHere').disabled = disableWaypointActions
-  if ($('#btnImport')) $('#btnImport').disabled = disableWaypointActions
-  if ($('#btnExport')) $('#btnExport').disabled = disableWaypointActions
+  if ($('#btnCreateResource')) {
+    $('#btnCreateResource').classList.toggle('hidden', disableResourceCreate)
+    $('#btnCreateResource').disabled = disableResourceCreate
+  }
+  if ($('#btnImport')) $('#btnImport').disabled = disableImportExport
+  if ($('#btnExport')) $('#btnExport').disabled = disableImportExport
 
   // Compute items and derived metrics for waypoints.
   let list = getItemsForTab().map(it => {
@@ -2463,7 +2671,8 @@ function render() {
 async function refresh() {
   try {
     setStatus('Refreshing…')
-    await Promise.all([fetchResources('waypoints'), fetchResources('routes')])
+    const tabs = RESOURCE_TABS.filter((tab) => isTabEnabled(tab))
+    await Promise.all(tabs.map((tab) => fetchResources(tab)))
     render()
     setStatus('Ready', true)
   } catch (e) {
@@ -2653,25 +2862,96 @@ async function createAtVesselPosition() {
   } catch (e) { setStatus(e.message || String(e), false) }
 }
 
+async function createResourceDraft() {
+  if (!RESOURCE_TABS.includes(state.tab) || state.tab === 'waypoints') return
+  const id = genUuid()
+  const template = buildResourceTemplate(state.tab)
+  template.id = id
+  const item = normalizeResource(state.tab, id, template)
+  await openDetail(item, { edit: true, isNew: true, preview: { raw: template } })
+}
+
+function extractLinePoints(raw = {}) {
+  const points = []
+  const addPoint = (lon, lat) => {
+    const longitude = Number(lon)
+    const latitude = Number(lat)
+    if (Number.isNaN(longitude) || Number.isNaN(latitude)) return
+    points.push({ latitude, longitude })
+  }
+
+  if (Array.isArray(raw.points)) {
+    for (const p of raw.points) {
+      addPoint(p.longitude ?? p.lon, p.latitude ?? p.lat)
+    }
+  }
+
+  const geometry = raw.feature?.geometry || raw.geometry
+  if (geometry?.type === 'LineString') {
+    for (const coord of (geometry.coordinates || [])) addPoint(coord[0], coord[1])
+  }
+  if (geometry?.type === 'MultiLineString') {
+    for (const part of (geometry.coordinates || [])) {
+      for (const coord of (part || [])) addPoint(coord[0], coord[1])
+    }
+  }
+
+  return points
+}
+
+function parseJsonResourceList(text) {
+  const data = JSON.parse(text)
+  if (Array.isArray(data)) return data
+  if (data && Array.isArray(data.items)) return data.items
+  if (data && Array.isArray(data.resources)) return data.resources
+  if (data && typeof data === 'object') return [data]
+  return []
+}
+
 // Export current items according to selected format.
 async function doExport() {
   const fmtSel = $('#exportFormat').value
   const selectedOnly = $('#exportSelectedOnly').checked
   const items = selectedOnly ? state.list.filter(it => state.selected.has(`${it.type}:${it.id}`)) : state.list
-  if (state.tab !== 'waypoints') { setStatus('Export currently supports waypoints only', false); return }
+  if (state.tab === 'files') { setStatus('Export not supported for files', false); return }
 
-  const waypoints = items.map(it => ({
+  const waypoints = items.filter(it => it.type === 'waypoints').map(it => ({
     id: it.id, name: it.name, description: it.description,
     latitude: it.position?.latitude, longitude: it.position?.longitude, icon: it.icon || '', type: it.wpType || '', skIcon: it.skIcon || ''
   })).filter(w => w.latitude != null && w.longitude != null)
 
+  const routes = items.filter(it => it.type === 'routes').map(it => ({
+    id: it.id,
+    name: it.name,
+    description: it.description,
+    points: extractLinePoints(state.resources.routes?.[it.id] || it.raw || {})
+  })).filter(r => r.points.length)
+
+  const tracks = items.filter(it => it.type === 'tracks').map(it => ({
+    id: it.id,
+    name: it.name,
+    description: it.description,
+    points: extractLinePoints(state.resources.tracks?.[it.id] || it.raw || {})
+  })).filter(t => t.points.length)
+
+  const regions = items.filter(it => it.type === 'regions').map(it => ({
+    ...state.resources.regions?.[it.id],
+    id: it.id,
+    name: it.name,
+    description: it.description
+  }))
+
   const ctrl = beginProgress('Exporting…')
   try {
     if (ctrl.signal.aborted) throw new Error('cancelled')
-    if (fmtSel === 'csv') downloadText('waypoints.csv', toCSV(waypoints))
-    if (fmtSel === 'gpx') downloadText('waypoints.gpx', toGPX({ waypoints }))
-    if (fmtSel === 'kml') downloadText('waypoints.kml', toKML({ waypoints }))
-    if (fmtSel === 'geojson') downloadText('waypoints.geojson', toGeoJSON({ waypoints }))
+    if (fmtSel === 'csv') downloadText(`${state.tab}.csv`, toCSV(waypoints))
+    if (fmtSel === 'gpx') downloadText(`${state.tab}.gpx`, toGPX({ waypoints, routes, tracks }))
+    if (fmtSel === 'kml') downloadText(`${state.tab}.kml`, toKML({ waypoints, routes, tracks }))
+    if (fmtSel === 'geojson') downloadText(`${state.tab}.geojson`, toGeoJSON({ waypoints, routes, tracks, regions }))
+    if (fmtSel === 'json') {
+      const payload = items.map(it => ({ id: it.id, ...(state.resources[it.type]?.[it.id] || it.raw || {}) }))
+      downloadText(`${state.tab}.json`, JSON.stringify(payload, null, 2))
+    }
     setStatus('Exported ✔', true)
   } catch (e) {
     if (ctrl.signal.aborted || e.message === 'cancelled') setStatus('Export cancelled', false)
@@ -2699,27 +2979,85 @@ async function doImport() {
     if (fmtSel === 'gpx') items = parseGPX(text)
     if (fmtSel === 'kml') items = parseKML(text)
     if (fmtSel === 'geojson') items = parseGeoJSON(text)
+    if (fmtSel === 'json') items = parseJsonResourceList(text)
 
-    const creates = items.filter(x => x.kind === 'waypoint').map(it => {
-      // …
-      const item = {
-        id: genUuid(),
-        name: it.name || 'Waypoint',
-        description: it.description || '',
-        type: it.type || 'waypoint',
-        position: { latitude: it.latitude, longitude: it.longitude },
-        properties: it.properties || {}
-      }
-      console.log(item)
-      return buildWaypointPayload(item)
-    })
-    if (!creates.length) throw new Error('No importable waypoints found')
+    let creates = []
+    if (state.tab === 'waypoints') {
+      creates = items.filter(x => x.kind === 'waypoint' || x.latitude != null || x.feature || x.geometry).map(it => {
+        if (it.feature || it.geometry) {
+          const id = it.id || genUuid()
+          return { ...it, id }
+        }
+        const item = {
+          id: it.id || genUuid(),
+          name: it.name || 'Waypoint',
+          description: it.description || '',
+          type: it.type || 'waypoint',
+          position: { latitude: it.latitude, longitude: it.longitude },
+          properties: it.properties || {}
+        }
+        return buildWaypointPayload(item)
+      })
+    } else if (state.tab === 'routes') {
+      creates = items.filter(x => x.kind === 'route' || x.feature || x.points).map(it => {
+        if (it.feature || it.geometry) {
+          const id = it.id || genUuid()
+          return { ...it, id }
+        }
+        return buildLinePayload({
+          id: it.id || genUuid(),
+          name: it.name || 'Route',
+          description: it.description || '',
+          points: it.points || []
+        })
+      })
+    } else if (state.tab === 'tracks') {
+      creates = items.filter(x => x.kind === 'track' || x.feature || x.points).map(it => {
+        if (it.feature || it.geometry) {
+          const id = it.id || genUuid()
+          return { ...it, id }
+        }
+        return buildLinePayload({
+          id: it.id || genUuid(),
+          name: it.name || 'Track',
+          description: it.description || '',
+          points: it.points || []
+        })
+      })
+    } else if (state.tab === 'regions') {
+      creates = items.filter(x => x.kind === 'region' || x.geometry || x.feature).map(it => {
+        if (it.feature || it.geometry) {
+          const id = it.id || genUuid()
+          if (it.feature) return { ...it, id }
+          return buildRegionPayload({
+            id,
+            name: it.name || 'Region',
+            description: it.description || '',
+            geometry: it.geometry,
+            properties: it.properties || {}
+          })
+        }
+        return buildRegionPayload({
+          id: it.id || genUuid(),
+          name: it.name || 'Region',
+          description: it.description || '',
+          geometry: it.geometry,
+          properties: it.properties || {}
+        })
+      })
+    } else if (state.tab === 'notes' || state.tab === 'charts') {
+      creates = items.map(it => ({ ...it, id: it.id || genUuid() }))
+    }
 
-    const ctrl = beginProgress(`Importing ${creates.length} waypoint(s)...`, { indeterminate: false })
+    if (!creates.length) throw new Error(`No importable ${state.tab} found`)
+
+    const ctrl = beginProgress(`Importing ${creates.length} item(s)...`, { indeterminate: false })
     for (let i = 0; i < creates.length; i++) {
       if (ctrl.signal.aborted) throw new Error('cancelled')
       const c = creates[i]
-      const res = await fetch(`${RES_ENDPOINT('waypoints')}/${encodeURIComponent(c.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c), signal: ctrl.signal })
+      const id = c.id || genUuid()
+      c.id = id
+      const res = await fetch(`${RES_ENDPOINT(state.tab)}/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c), signal: ctrl.signal })
       if (!res.ok) throw new Error(`Create failed: ${res.status}`)
       updateProgress(((i + 1) / creates.length) * 100, `Importing ${i + 1}/${creates.length}…`)
     }
@@ -2735,12 +3073,14 @@ async function doImport() {
 // Switch between tabs and rerender UI.
 function setTab(tab) {
   if (tab === 'files' && !hasFileRoots()) return
+  if (!isTabEnabled(tab)) return
   state.tab = tab
   state.selected.clear()
   state.page[tab] = 1
   closeDetail()
   document.querySelectorAll('.segmented__btn').forEach(b => b.classList.toggle('segmented__btn--active', b.dataset.tab === tab))
   if (tab === 'files' && !filesState.remoteEntries.length) remoteList(filesState.remotePath, activeFileRootId())
+  updateFormatOptions(tab)
   render()
 }
 
@@ -2791,6 +3131,7 @@ function wire() {
   $('#selectAll').addEventListener('change', (e) => setSelectAll(e.target.checked))
   $('#btnBulkDelete').addEventListener('click', bulkDelete)
   $('#btnCreateHere').addEventListener('click', createAtVesselPosition)
+  $('#btnCreateResource')?.addEventListener('click', createResourceDraft)
 
   $('#btnExport').addEventListener('click', () => $('#dlgExport').showModal())
   $('#btnImport').addEventListener('click', () => $('#dlgImport').showModal())
@@ -2869,10 +3210,12 @@ function connectWS(isRetry=false) {
 // Boot sequence: load icons, wire events, refresh data, load files, and connect to websocket.
 async function boot() {
   await loadConfig()
+  await loadPluginStatus()
   await loadIcons()
   await loadSkIcons()
   await loadWaypointTypes()
   wire()
+  updateFormatOptions(state.tab)
   await refresh()
   if (hasFileRoots()) {
     try { await remoteList('', activeFileRootId()) } catch {}

@@ -107,7 +107,7 @@ export function parseGPX(xmlText) {
   return items // Return collected records.
 }
 // Serialize waypoints to a minimal GPX document.
-export function toGPX({ waypoints = [] }) {
+export function toGPX({ waypoints = [], routes = [], tracks = [] }) {
   const esc = (s) => (s ?? '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') // XML escape helper.
   const wptXml = waypoints.map(w => `
     <wpt lat="${w.latitude}" lon="${w.longitude}">
@@ -115,9 +115,32 @@ export function toGPX({ waypoints = [] }) {
       ${w.description ? `<desc>${esc(w.description)}</desc>` : ''}
       ${w.icon ? `<sym>${esc(w.icon)}</sym>` : ''}
     </wpt>`).join('\n') // Join waypoint snippets.
+  const rteXml = (routes || []).map(r => {
+    const pts = (r.points || []).map(p => `
+      <rtept lat="${p.latitude}" lon="${p.longitude}"></rtept>`).join('')
+    return `
+    <rte>
+      <name>${esc(r.name || 'Route')}</name>
+      ${r.description ? `<desc>${esc(r.description)}</desc>` : ''}
+      ${pts}
+    </rte>`
+  }).join('\n')
+  const trkXml = (tracks || []).map(t => {
+    const pts = (t.points || []).map(p => `
+        <trkpt lat="${p.latitude}" lon="${p.longitude}"></trkpt>`).join('')
+    return `
+    <trk>
+      <name>${esc(t.name || 'Track')}</name>
+      ${t.description ? `<desc>${esc(t.description)}</desc>` : ''}
+      <trkseg>${pts}
+      </trkseg>
+    </trk>`
+  }).join('\n')
   return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Navigation Manager" xmlns="http://www.topografix.com/GPX/1/1">
 ${wptXml}
+${rteXml}
+${trkXml}
 </gpx>` // Envelope GPX.
 }
 // Parse KML into waypoints or tracks.
@@ -143,7 +166,7 @@ export function parseKML(xmlText) {
   return items // Return parsed items.
 }
 // Serialize waypoints to KML for export.
-export function toKML({ waypoints = [] }) {
+export function toKML({ waypoints = [], routes = [], tracks = [] }) {
   const esc = (s) => (s ?? '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') // XML escape helper.
   const wpt = waypoints.map(w => `
   <Placemark>
@@ -151,11 +174,21 @@ export function toKML({ waypoints = [] }) {
     ${w.description ? `<description>${esc(w.description)}</description>` : ''}
     <Point><coordinates>${w.longitude},${w.latitude},0</coordinates></Point>
   </Placemark>`).join('\n') // Join waypoint placemarks.
+  const lineString = (name, description, points) => `
+  <Placemark>
+    <name>${esc(name)}</name>
+    ${description ? `<description>${esc(description)}</description>` : ''}
+    <LineString><coordinates>${(points || []).map(p => `${p.longitude},${p.latitude},0`).join(' ')}</coordinates></LineString>
+  </Placemark>`
+  const rte = (routes || []).map(r => lineString(r.name || 'Route', r.description || '', r.points || [])).join('\n')
+  const trk = (tracks || []).map(t => lineString(t.name || 'Track', t.description || '', t.points || [])).join('\n')
   return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
 <Document>
   <name>Navigation Manager Export</name>
   ${wpt}
+  ${rte}
+  ${trk}
 </Document>
 </kml>` // Complete KML document.
 }
@@ -193,6 +226,16 @@ export function parseGeoJSON(text) {
         .filter(p => p.latitude != null && p.longitude != null && !Number.isNaN(p.latitude) && !Number.isNaN(p.longitude))
         .map(p => ({ latitude: p.latitude, longitude: p.longitude }))
     if (pts.length) items.push({ kind, name, description, points: pts })
+  }
+  const addRegion = (name, description, geometry, properties) => {
+    if (!geometry) return
+    items.push({
+      kind: 'region',
+      name,
+      description,
+      geometry,
+      properties: properties || {}
+    })
   }
 
   for (const f of feats) {
@@ -248,12 +291,14 @@ export function parseGeoJSON(text) {
         if (Array.isArray(part)) merged.push(...part) // Flatten each part.
       }
       addLine(kind === 'route' ? 'route' : 'track', name, description, merged) // Add merged line.
+    } else if (g.type === 'Polygon' || g.type === 'MultiPolygon') {
+      addRegion(name, description, g, p)
     }
   }
   return items // Return results.
 }
 
-export function toGeoJSON({ waypoints = [], routes = [], tracks = [] }) {
+export function toGeoJSON({ waypoints = [], routes = [], tracks = [], regions = [] }) {
   const features = [] // Output feature list.
 
   for (const w of (waypoints || [])) {
@@ -295,6 +340,21 @@ export function toGeoJSON({ waypoints = [], routes = [], tracks = [] }) {
   for (const t of (tracks || [])) {
     if (!t.points?.length) continue // Ignore empty tracks.
     features.push(lineFeature('track', t)) // Add track feature.
+  }
+  for (const r of (regions || [])) {
+    const geometry = r.geometry || r.feature?.geometry
+    if (!geometry) continue
+    features.push({
+      type: 'Feature',
+      geometry,
+      properties: {
+        kind: 'region',
+        id: r.id || null,
+        name: r.name || 'Region',
+        description: r.description || '',
+        ...(r.properties || r.feature?.properties || {})
+      }
+    })
   }
 
   return JSON.stringify({ type: 'FeatureCollection', features }, null, 2) // Stringify with indentation.
